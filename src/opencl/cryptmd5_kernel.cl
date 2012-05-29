@@ -6,7 +6,7 @@
 #define uint32_t	unsigned int
 #define uint8_t		unsigned char
 
-#define ROTATE_LEFT(x, s) rotate(x,s)
+#define ROTATE_LEFT(x, s) rotate(x, (uint32_t)s)
 
 //#define F(x, y, z)	((z) ^ ((x) & ((y) ^ (z))))
 //#define G(x, y, z)	((y) ^ ((z) & ((x) ^ (y))))

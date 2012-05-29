@@ -165,8 +165,9 @@ static void find_best_workgroup()
 	int i;
 	size_t max_group_size;
 
-	clGetDeviceInfo(devices[gpu_id], CL_DEVICE_MAX_WORK_GROUP_SIZE,
-	    sizeof(max_group_size), &max_group_size, NULL);
+	clGetKernelWorkGroupInfo(crypt_kernel, devices[gpu_id],
+	    CL_KERNEL_WORK_GROUP_SIZE, sizeof(max_group_size),
+	    &max_group_size, NULL);
 	cl_command_queue queue_prof =
 	    clCreateCommandQueue(context[gpu_id], devices[gpu_id],
 	    CL_QUEUE_PROFILING_ENABLE,
@@ -187,7 +188,7 @@ static void find_best_workgroup()
 		saltsize, &host_salt, 0, NULL, NULL), "Copy memsalt");
 
 	/// Find minimum time
-	for (my_work_group = 1; (int) my_work_group <= (int) max_group_size;
+	for (my_work_group = 32; (int) my_work_group <= (int) max_group_size;
 	    my_work_group *= 2) {
 
 		size_t localworksize = my_work_group;

@@ -90,9 +90,10 @@ static void find_best_workgroup()
 	size_t max_group_size;
 	cl_device_type device_type;
 	clGetDeviceInfo(devices[gpu_id], CL_DEVICE_TYPE,
-	    sizeof(device_type), &device_type, NULL);   
-	clGetDeviceInfo(devices[gpu_id], CL_DEVICE_MAX_WORK_GROUP_SIZE,
-	    sizeof(max_group_size), &max_group_size, NULL);
+	    sizeof(device_type), &device_type, NULL);
+	clGetKernelWorkGroupInfo(crypt_kernel, devices[gpu_id],
+	    CL_KERNEL_WORK_GROUP_SIZE, sizeof(max_group_size),
+	    &max_group_size, NULL);
 	cl_command_queue queue_prof =
 	    clCreateCommandQueue(context[gpu_id], devices[gpu_id],
 	    CL_QUEUE_PROFILING_ENABLE,
@@ -115,7 +116,7 @@ static void find_best_workgroup()
 	    "Copy setting to gpu");
 
 	///Find best local work size
-	my_work_group = 1;
+	my_work_group = 32;
 	if(device_type==CL_DEVICE_TYPE_GPU) my_work_group=32;
 	for (; (int) my_work_group <= (int) max_group_size;
 	    my_work_group *= 2) {
