@@ -17,11 +17,10 @@
 #include "memory.h"
 #include "config.h"
 #include "logger.h"
-#include "external.h"
-
-#ifdef HAVE_MPI
-#include "john-mpi.h"
+#ifndef BENCH_BUILD
+#include "options.h"
 #endif
+#include "external.h"
 
 char *cfg_name = NULL;
 static struct cfg_section *cfg_database = NULL;
@@ -126,10 +125,10 @@ static int cfg_process_line(char *line, int number)
 
 static void cfg_error(char *name, int number)
 {
-#ifdef HAVE_MPI
-	if (mpi_id == 0)
+#ifndef BENCH_BUILD
+	if (options.rootnode)
 #endif
-	fprintf(stderr, "Error in %s at line %d\n",
+	    fprintf(stderr, "Error in %s at line %d\n",
 		path_expand(name), number);
 	error();
 }

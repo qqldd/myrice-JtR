@@ -172,7 +172,7 @@ BENCH_OBJS = \
 	$(BENCH_MD5_OBJS_DEPEND) \
 	$(BENCH_BF_OBJS_DEPEND) \
 	bench-t.o best.o common.o config_g.o formats_g.o math.o memory.o \
-	miscnl.o params.o path.o signals.o tty.o
+	miscnl.o params.o path.o signals_g.o tty.o
 
 PARA_BENCH_32_OBJS = \
 	bench-t.o para-best.o common.o config_g.o formats_g.o math.o memory.o \
@@ -1622,6 +1622,10 @@ DES_bsg.o: DES_bs.c
 # This is for the BENCH build (to not depend upon unicode.o)
 config_g.o: config.c
 	$(CC) $(CFLAGS) -DBENCH_BUILD config.c -o config_g.o
+
+# This is for the BENCH build (references to john_pids)
+signals_g.o: signals.c
+	$(CC) $(CFLAGS) -DBENCH_BUILD signals.c -o signals_g.o
 
 # This is for the BENCH build (to not depend upon options.o)
 formats_g.o: formats.o

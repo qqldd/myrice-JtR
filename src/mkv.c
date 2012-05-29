@@ -21,10 +21,7 @@
 #include "charset.h"
 #include "external.h"
 #include "cracker.h"
-
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
+#include "options.h"
 #include "mkv.h"
 
 #if defined (__MINGW32__) || defined (_MSC_VER)
@@ -241,18 +238,16 @@ static int get_progress(int *hundth_perc)
 void do_markov_crack(struct db_main *db, unsigned int mkv_level, unsigned long long mkv_start, unsigned long long mkv_end, unsigned int mkv_maxlen, unsigned int mkv_minlevel, unsigned int mkv_minlen)
 {
 	char * statfile;
-
-#ifdef HAVE_MPI
 	unsigned long long mkv_size;
-#endif
+	char statusbuf[256];
+	char *status = statusbuf;
+
 	if(mkv_level == 0)
 		if( (mkv_level = cfg_get_int("Options", NULL, "MkvLvl")) == -1 )
 		{
 			log_event("no markov level defined!");
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "no markov level defined!\n");
+			if (options.rootnode)
+				fprintf(stderr, "no markov level defined!\n");
 			error();
 		}
 
@@ -260,10 +255,8 @@ void do_markov_crack(struct db_main *db, unsigned int mkv_level, unsigned long l
 		if( (mkv_maxlen = cfg_get_int("Options", NULL, "MkvMaxLen")) == -1 )
 		{
 			log_event("no markov max length defined!");
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "no markov max length defined!\n");
+			if (options.rootnode)
+				fprintf(stderr, "no markov max length defined!\n");
 			error();
 		}
 
@@ -271,20 +264,16 @@ void do_markov_crack(struct db_main *db, unsigned int mkv_level, unsigned long l
 	if(statfile == NULL)
 	{
 		log_event("statfile not defined");
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Statfile not defined\n");
+		if (options.rootnode)
+			fprintf(stderr, "Statfile not defined\n");
 		error();
 	}
 
 	if (mkv_maxlen > db->format->params.plaintext_length) {
 		log_event("! MaxLen = %d is too large for this hash type",
 			mkv_maxlen);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: "
+		if (options.rootnode)
+		    fprintf(stderr, "Warning: "
 			"MaxLen = %d is too large for the current hash type, "
 			"reduced to %d\n",
 			mkv_maxlen, db->format->params.plaintext_length);
@@ -293,19 +282,15 @@ void do_markov_crack(struct db_main *db, unsigned int mkv_level, unsigned long l
 
 	if (mkv_maxlen > MAX_MKV_LEN) {
 		log_event("! MaxLen = %d is too large (max=%d)", mkv_maxlen, MAX_MKV_LEN);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", mkv_maxlen, MAX_MKV_LEN);
+		if (options.rootnode)
+			fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", mkv_maxlen, MAX_MKV_LEN);
 		mkv_maxlen = MAX_MKV_LEN;
 	}
 
 	if (mkv_level > MAX_MKV_LVL) {
 		log_event("! Level = %d is too large (max=%d)", mkv_level, MAX_MKV_LVL);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", mkv_level, MAX_MKV_LVL);
+		if (options.rootnode)
+			fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", mkv_level, MAX_MKV_LVL);
 		mkv_level = MAX_MKV_LVL;
 	}
 
@@ -334,50 +319,53 @@ void do_markov_crack(struct db_main *db, unsigned int mkv_level, unsigned long l
 	if(mkv_end>nbparts[0])
 	{
 		log_event("! End = "LLd" is too large (max="LLd")", mkv_end, nbparts[0]);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: End = "LLd" is too large (max = "LLd")\n", mkv_end, nbparts[0]);
+		if (options.rootnode)
+			fprintf(stderr, "Warning: End = "LLd" is too large (max = "LLd")\n", mkv_end, nbparts[0]);
 		mkv_end = nbparts[0];
 	}
 
 	if(mkv_start>mkv_end)
 	{
 		log_event("! MKV start > end ("LLd" > "LLd")", mkv_start, mkv_end);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Error: MKV start > end ("LLd" > "LLd")\n", mkv_start, mkv_end);
+		if (options.rootnode)
+			fprintf(stderr, "Error: MKV start > end ("LLd" > "LLd")\n", mkv_start, mkv_end);
 		error();
 	}
 
-#ifdef HAVE_MPI
-	if (mpi_id == 0) {
-		fprintf(stderr, "MKV start (lvl=");
-		if(mkv_minlevel>0) fprintf(stderr, "%d-", mkv_minlevel);
-		fprintf(stderr, "%d len=", mkv_level);
-		if(mkv_minlen>0) fprintf(stderr, "%d-", mkv_minlen);
-		fprintf(stderr, "%d pwd="LLd"%s)\n", mkv_maxlen, mkv_end-mkv_start,
-		mpi_p > 1 ? " split over MPI nodes" : "");
+	if (options.rootnode) {
+		status += sprintf(status, "MKV start (lvl=");
+		if(mkv_minlevel > 0)
+			status += sprintf(status, "%d-", mkv_minlevel);
+		status += sprintf(status, "%d len=", mkv_level);
+		if(mkv_minlen > 0)
+			status += sprintf(status, "%d-", mkv_minlen);
+		status += sprintf(status, "%d start %lld end %lld pwd="LLd")",
+		                  mkv_maxlen, mkv_start, mkv_end, mkv_end-mkv_start);
+		fprintf(stderr, "%s\n", statusbuf);
+		// Output total numbers to stderr of root node
+		status = statusbuf;
 	}
 
-	if (mpi_p > 1) {
+	if (options.node_count > 1) {
 		mkv_size = mkv_end - mkv_start + 1;
-		if (mpi_id != (mpi_p - 1))
-			mkv_end = mkv_start + (mkv_size / mpi_p) * (mpi_id + 1) - 1;
-		mkv_start = mkv_start + (mkv_size / mpi_p) * mpi_id;
+		if (options.node_max != options.node_count)
+			mkv_end = mkv_start + mkv_size / options.node_count * options.node_max - 1;
+		mkv_start += mkv_size / options.node_count * (options.node_min - 1);
 	}
-#endif
+
+	// Output per-node numbers to log
+	status += sprintf(status, "MKV start (lvl=");
+	if(mkv_minlevel > 0)
+		status += sprintf(status, "%d-", mkv_minlevel);
+	status += sprintf(status, "%d len=", mkv_level);
+	if(mkv_minlen > 0)
+		status += sprintf(status, "%d-", mkv_minlen);
+	status += sprintf(status, "%d start %lld end %lld pwd="LLd")",
+	                  mkv_maxlen, mkv_start, mkv_end, mkv_end-mkv_start);
+	log_event("%s", statusbuf);
+
 	gstart = mkv_start;
 	gend = mkv_end + 10; /* omg !! */
-
-#ifndef HAVE_MPI
-	fprintf(stderr, "MKV start (lvl=");
-	if(mkv_minlevel>0) fprintf(stderr, "%d-", mkv_minlevel);
-	fprintf(stderr, "%d len=", mkv_level);
-	if(mkv_minlen>0) fprintf(stderr, "%d-", mkv_minlen);
-	fprintf(stderr, "%d pwd="LLd")\n", mkv_maxlen, mkv_end-mkv_start);
-#endif
 
 	show_pwd(mkv_start);
 

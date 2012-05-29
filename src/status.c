@@ -444,11 +444,15 @@ static void status_print_cracking(char *percent)
 	if (showcand)
 		sprintf(cand, "/%.0f", (double)((long long)status.crypts.hi << 32) + status.crypts.lo);
 
-#ifdef HAVE_MPI
-	// we need to print until cr in one call, otherwise output gets interleaved
+	// we need to print until cr in one call, otherwise output gets
+	// interleaved when multiple nodes print at once
 	char nodeid[11] = "";
-	if (mpi_p > 1)
-		snprintf(nodeid, sizeof(nodeid), "%3d: ", mpi_id);
+	if (options.node_count > 1) {
+		if (options.node_max > options.node_min)
+			snprintf(nodeid, sizeof(nodeid), "%2d-%2d: ", options.node_min, options.node_max);
+		else
+			snprintf(nodeid, sizeof(nodeid), "%3d: ", options.node_min);
+	}
 	nodeid[sizeof(nodeid)-1] = 0;
 	char trying[256];
 	if ((options.flags & FLG_STATUS_CHK) ||
@@ -467,7 +471,7 @@ static void status_print_cracking(char *percent)
 		}
 		snprintf(trying, sizeof(trying),
 		         "%strying: %s%s%s",
-		         mpi_p > 1 ? " " : "  ",
+		         options.node_count > 1 ? " " : "  ",
 		         t1, t2[0] ? " - " : "", t2);
 	}
 
@@ -480,43 +484,13 @@ static void status_print_cracking(char *percent)
 	        "%s\n",
 	        nodeid,
 	        status.guess_count, cand,
-	        mpi_p > 1 ? " " : "  ",
+	        options.node_count > 1 ? " " : "  ",
 	        time / 86400, time % 86400 / 3600, time % 3600 / 60, time % 60,
 	        strncmp(percent, " 100", 4) ? percent : " DONE",
 	        status_get_ETA(percent,time),
-	        mpi_p > 1 ? " " : "  ",
+	        options.node_count > 1 ? " " : "  ",
 	        status_get_cps(s_cps),
 	        trying);
-#else
-	fprintf(stderr,
-		"guesses: %u%s  "
-		"time: %u:%02u:%02u:%02u"
-		"%s%s  "
-		"c/s: %s",
-		status.guess_count, cand,
-		time / 86400, time % 86400 / 3600, time % 3600 / 60, time % 60,
-		strncmp(percent, " 100", 4) ? percent : " DONE",
-		status_get_ETA(percent,time),
-		status_get_cps(s_cps));
-
-	if ((options.flags & FLG_STATUS_CHK) ||
-	    !(status.crypts.lo | status.crypts.hi))
-		fputc('\n', stderr);
-	else {
-		UTF8 t1buf[PLAINTEXT_BUFFER_SIZE + 1];
-		UTF8 t2buf[PLAINTEXT_BUFFER_SIZE + 1];
-		char *t1, *t2;
-		if (options.report_utf8 && !options.utf8) {
-			t1 = (char*)enc_to_utf8_r(crk_get_key1(), t1buf, PLAINTEXT_BUFFER_SIZE);
-			t2 = (char*)enc_to_utf8_r(saved_key, t2buf, PLAINTEXT_BUFFER_SIZE);
-		} else {
-			t1 = crk_get_key1();
-			t2 = saved_key;
-		}
-		fprintf(stderr,	"  trying: %s%s%s\n",
-		        t1, t2[0] ? " - " : "", t2);
-	}
-#endif
 }
 
 void status_print(void)

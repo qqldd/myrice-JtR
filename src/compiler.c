@@ -232,10 +232,10 @@ static c_int c_getint(char *token)
 	char *error;
 
 	if (token[0] == '\'') {
-		if ((value = c_getchar(1)) == '\'')
+		if ((value = (unsigned char)c_getchar(1)) == '\'')
 			c_errno = C_ERROR_UNEXPECTED;
 		else
-			if (value == '\\') value = c_getchar(1);
+			if (value == '\\') value = (unsigned char)c_getchar(1);
 		if (c_getchar(1) != '\'') c_errno = C_ERROR_UNEXPECTED;
 	} else {
 		errno = 0;

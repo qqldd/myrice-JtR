@@ -8,10 +8,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
-
 #include "arch.h"
 #include "misc.h"
 #include "params.h"
@@ -1602,10 +1598,8 @@ int rules_count(struct rpp_context *start, int split)
 	if (!(count1 = rules_check(start, split))) {
 		log_event("! Invalid rule at line %d: %.100s",
 			rules_line, rules_errors[rules_errno]);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Invalid rule in %s at line %d: %s\n",
+		if (options.rootnode)
+		    fprintf(stderr, "Invalid rule in %s at line %d: %s\n",
 			start->input->cfg_name, rules_line,
 			rules_errors[rules_errno]);
 		error();

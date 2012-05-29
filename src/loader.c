@@ -325,10 +325,8 @@ static int ldr_split_line(char **login, char **ciphertext,
 #endif
 				if (alt->methods.valid(*ciphertext,alt)) {
 					alt->params.flags |= FMT_WARNED;
-#ifdef HAVE_MPI
-					if (mpi_id == 0)
-#endif
-					fprintf(stderr,
+					if (options.rootnode)
+					    fprintf(stderr,
 					    "Warning: only loading hashes "
 					    "of type \"%s\", but also saw "
 					    "type \"%s\"\n"
@@ -383,10 +381,8 @@ static int ldr_split_line(char **login, char **ciphertext,
 			break;
 		}
 #ifdef LDR_WARN_AMBIGUOUS
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr,
+		if (options.rootnode)
+		    fprintf(stderr,
 		    "Warning: detected hash type \"%s\", but the string is "
 		    "also recognized as \"%s\"\n"
 		    "Use the \"--format=%s\" option to force loading these "
@@ -512,9 +508,7 @@ static void ldr_load_pw_line(struct db_main *db, char *line)
 				}
 				if (++collisions <= LDR_HASH_COLLISIONS_MAX)
 					continue;
-#ifdef HAVE_MPI
-				if (mpi_id == 0) {
-#endif
+				if (options.rootnode) {
 				if (format->params.binary_size)
 					fprintf(stderr, "Warning: "
 					    "excessive partial hash "
@@ -528,9 +522,7 @@ static void ldr_load_pw_line(struct db_main *db, char *line)
 					fprintf(stderr, "Warning: "
 					    "check for duplicates partially "
 					    "bypassed to speedup loading\n");
-#ifdef HAVE_MPI
 				}
-#endif
 				skip_dupe_checking = 1;
 				current_pw = NULL; /* no match */
 				break;

@@ -196,6 +196,10 @@ struct options_main {
 /* Forced min/max_keys_per_crypt (for testing purposes) */
 	int mkpc;
 
+/* MPI or fork/node id's */
+	char *node_str;
+	unsigned int node_min, node_max, node_count, fork, rootnode;
+
 /* Graceful exit after this many seconds of cracking */
 	int max_run_time;
 

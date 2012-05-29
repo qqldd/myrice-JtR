@@ -269,6 +269,20 @@ static int sig_getchar(void)
 
 #endif
 
+#ifdef BENCH_BUILD
+static void signal_children(void) { }
+#else
+extern int john_pids[];
+
+static void signal_children(void)
+{
+	int i, pid;
+
+	for (i = 0; (pid = john_pids[i]); i++)
+		kill(pid, SIGUSR2);
+}
+#endif
+
 static void sig_install_timer(void);
 
 static void sig_handle_timer(int signum)
@@ -294,6 +308,7 @@ static void sig_handle_timer(int signum)
 		while (sig_getchar() >= 0);
 
 		event_status = event_pending = 1;
+		signal_children();
 	}
 
 #if !OS_TIMER
@@ -347,6 +362,12 @@ static void sig_remove_timer(void)
 	signal(SIGALRM, SIG_DFL);
 }
 
+static void sig_handle_status(int signum)
+{
+	event_status = event_pending = 1;
+	signal(SIGUSR2, sig_handle_status);
+}
+
 static void sig_done(void);
 
 void sig_init(void)
@@ -372,6 +393,7 @@ void sig_init(void)
 	sig_install_update();
 	sig_install_abort();
 	sig_install_timer();
+	signal(SIGUSR2, sig_handle_status);
 }
 
 static void sig_done(void)

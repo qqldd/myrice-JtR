@@ -27,9 +27,6 @@
 #include "common.h"
 #include "formats.h"
 #include "loader.h"
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
 
 #define FORMAT_LABEL			"crypt"
 #define FORMAT_NAME			"generic crypt(3)"
@@ -193,10 +190,7 @@ static int valid(char *ciphertext, struct fmt_main *pFmt)
 		return 1;
 	}
 
-	if (id != 10 && !ldr_in_pot)
-#ifdef HAVE_MPI
-	if (mpi_id == 0)
-#endif
+	if (id != 10 && options.rootnode && !ldr_in_pot)
 		fprintf(stderr, "Generic crypt(3) module: "
 		    "hash encoding string length %d, type id %c%c\n"
 		    "appears to be unsupported on this system; "

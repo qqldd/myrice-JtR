@@ -134,6 +134,9 @@ static struct opt_entry opt_list[] = {
 	{"config", FLG_CONFIG_CLI, FLG_NONE, 0, OPT_REQ_PARAM,
 		OPT_FMT_STR_ALLOC, &options.config},
 	{"nolog", FLG_NOLOG, FLG_NOLOG},
+	{"node", FLG_NONE, FLG_NONE, 0, OPT_REQ_PARAM,
+		OPT_FMT_STR_ALLOC, &options.node_str},
+	{"fork", FLG_NONE, FLG_NONE, 0, OPT_REQ_PARAM, "%u", &options.fork},
 	{"crack-status", FLG_CRKSTAT, FLG_CRKSTAT},
 	{"mkpc", FLG_NONE, FLG_NONE, 0, OPT_REQ_PARAM,
 		"%u", &options.mkpc},
@@ -204,6 +207,8 @@ static struct opt_entry opt_list[] = {
 "--field-separator-char=C  use 'C' instead of the ':' in input and pot files\n" \
 "--fix-state-delay=N       performance tweak, see documentation\n" \
 "--nolog                   disables creation and writing to john.log file\n" \
+"--node=MIN[-MAX]/COUNT    this node's number range out of total count\n" \
+"--fork=COUNT              fork this many processes\n" \
 "--crack-status            emit a status line whenever a password is cracked\n" \
 "--max-run-time=N          gracefully exit after this many seconds\n" \
 "--regen-lost-salts=N      regenerate lost salts for some hashes (see OPTIONS)\n"
@@ -293,6 +298,13 @@ void opt_init(char *name, int argc, char **argv)
 
 	memset(&options, 0, sizeof(options));
 
+#ifdef HAVE_MPI
+	if (mpi_id > 0)
+		options.rootnode = 0;
+	else
+#endif
+		options.rootnode = 1;
+
 	options.loader.field_sep_char = options.field_sep_char = ':';
 	options.loader.regen_lost_salts = options.regen_lost_salts = 0;
 	options.loader.max_fix_state_delay = 0;
@@ -335,7 +347,119 @@ void opt_init(char *name, int argc, char **argv)
 		rec_name_completed = 0;
 	}
 
+	options.node_min = 1;
+	if (options.node_str) {
+		int n = sscanf(options.node_str, "%u-%u/%u",
+			&options.node_min, &options.node_max,
+			&options.node_count);
+		if (n != 3) {
+			sscanf(options.node_str, "%u/%u",
+			    &options.node_min, &options.node_count);
+			options.node_max = options.node_min;
+		}
+		if (!options.node_count) {
+			fprintf(stderr, "Inconsistent node arguments.\n");
+			error();
+		}
+		if (options.node_min == 0) {
+			fprintf(stderr, "Node numbers start from 1.\n");
+			error();
+		}
+		if (options.node_min > options.node_max) {
+			fprintf(stderr, "Node min. can't be higher than node max.\n");
+			error();
+		}
+		if (options.node_max > options.node_count) {
+			fprintf(stderr, "Node numbers can't be higher than node count\n");
+			error();
+		}
+	}
+	if (options.fork > 1) {
+#ifdef HAVE_MPI
+		if (mpi_p > 1) {
+			if (mpi_id == 0)
+				fprintf(stderr, "Fork can't be used when running multiple MPI nodes\n");
+			error();
+		}
+#endif
+		if (options.node_max &&
+		    (options.node_max - options.node_min + 1) != options.fork) {
+			fprintf(stderr, "Node range not consistent with fork number\n");
+			error();
+		} else
+			options.node_max = options.node_min + options.fork - 1;
+		if (!options.node_count)
+			options.node_count = options.fork;
+		if (options.node_max > options.node_count) {
+			fprintf(stderr, "Node max. can't be higher than node count\n");
+			error();
+		}
+		if (options.node_count > 1) {
+			if (options.flags & FLG_CRACKING_CHK)
+				fprintf(stderr, "Node numbers %u-%u of %u\n",
+				        options.node_min, options.node_max, options.node_count);
+			else {
+				fprintf(stderr, "Chosen mode not suitable for running with fork/node options\n");
+				error();
+			}
+		}
+	}
+#ifdef HAVE_MPI
+	else if (mpi_p > 1) {
+		if (options.node_max &&
+		    (options.node_max - options.node_min + 1) != mpi_p) {
+			fprintf(stderr, "Node range not consistent with MPI node count\n");
+			error();
+		} else
+			options.node_max = options.node_min + mpi_p - 1;
+		if (!options.node_count)
+			options.node_count = mpi_p;
+		if (options.node_max > options.node_count) {
+			fprintf(stderr, "Node max. can't be higher than node count\n");
+			error();
+		}
+		if (options.node_count > 1) {
+			if (options.flags & FLG_CRACKING_CHK) {
+				if (mpi_id == 0 && mpi_p != options.node_count)
+					fprintf(stderr, "Node numbers %u-%u of %u\n",
+					        options.node_min, options.node_max,
+					        options.node_count);
+			} else if (!(options.flags & (FLG_RESTORE_CHK | FLG_STATUS_CHK))) {
+				if (mpi_id == 0)
+					fprintf(stderr, "Chosen mode not suitable for running with multiple MPI nodes\n");
+				error();
+			}
+		}
+		options.node_min += mpi_id;
+		options.node_max = options.node_min;
+	}
+#endif
+	else { // we are a single thread running part(s) of a job
+		if (!options.node_max)
+			options.node_max = options.node_min;
+		if (!options.node_count)
+			options.node_count = options.node_max;
+		if (options.node_count > 1) {
+			if (options.flags & FLG_CRACKING_CHK) {
+				if (options.node_min == options.node_max)
+					fprintf(stderr, "Node number %u of %u\n",
+					        options.node_min, options.node_count);
+				else
+					fprintf(stderr, "Node numbers %u-%u of %u\n",
+					        options.node_min, options.node_max,
+					        options.node_count);
+			} else {
+				fprintf(stderr, "Chosen mode not suitable for running with fork/node options\n");
+				error();
+			}
+		}
+	}
+
 	if (options.flags & FLG_RESTORE_CHK) {
+		if (options.fork > 1) {
+			fprintf(stderr, "restore of forked sessions is currently broken, you may try restoring the processes one by one\n");
+			error();
+		}
 		rec_restore_args(1);
 		return;
 	}
@@ -377,17 +501,13 @@ void opt_init(char *name, int argc, char **argv)
 			else
 				options.loader.max_pps = 0x7fffffff;
 		} else if (options.loader.min_pps < 0) {
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "Usage of negative -salt min is not 'valid' if using Min and Max salt range of values\n");
+			if (options.rootnode)
+				fprintf(stderr, "Usage of negative -salt min is not 'valid' if using Min and Max salt range of values\n");
 			error();
 		}
 		if (options.loader.min_pps > options.loader.max_pps) {
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "Min number salts wanted is less than Max salts wanted\n");
+			if (options.rootnode)
+				fprintf(stderr, "Min number salts wanted is less than Max salts wanted\n");
 			error();
 		}
 	}
@@ -396,10 +516,8 @@ void opt_init(char *name, int argc, char **argv)
 		options.length = PLAINTEXT_BUFFER_SIZE - 3;
 	else
 	if (options.length < 1 || options.length > PLAINTEXT_BUFFER_SIZE - 3) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Invalid plaintext length requested\n");
+		if (options.rootnode)
+			fprintf(stderr, "Invalid plaintext length requested\n");
 		error();
 	}
 
@@ -413,19 +531,15 @@ void opt_init(char *name, int argc, char **argv)
 	if (!(options.subformat && !strcasecmp(options.subformat, "list")) &&
 	    (!options.listconf))
 	if ((options.flags & (FLG_PASSWD | FLG_PWD_REQ)) == FLG_PWD_REQ) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Password files required, "
+		if (options.rootnode)
+			fprintf(stderr, "Password files required, "
 			"but none specified\n");
 		error();
 	}
 
 	if ((options.flags & (FLG_PASSWD | FLG_PWD_SUP)) == FLG_PASSWD) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Password files specified, "
+		if (options.rootnode)
+			fprintf(stderr, "Password files specified, "
 			"but no option would use them\n");
 		error();
 	}
@@ -446,10 +560,8 @@ void opt_init(char *name, int argc, char **argv)
 				options.mkv_minlevel = 0;
 				if (sscanf(token, "%d", &options.mkv_level) != 1)
 				{
-#ifdef HAVE_MPI
-					if (mpi_id == 0)
-#endif
-					fprintf(stderr, "Could not parse markov parameters\n");
+					if (options.rootnode)
+						fprintf(stderr, "Could not parse markov parameters\n");
 					error();
 				}
 			}
@@ -470,28 +582,17 @@ void opt_init(char *name, int argc, char **argv)
 		}
 		if(options.mkv_level<options.mkv_minlevel)
 		{
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", options.mkv_level, options.mkv_minlevel, options.mkv_level);
+			if (options.rootnode)
+				fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", options.mkv_level, options.mkv_minlevel, options.mkv_level);
 			options.mkv_minlevel = options.mkv_level;
 		}
 		if(options.mkv_minlen > options.mkv_maxlen)
 		{
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "Warning: minimum length(%d) < maximum length(%d), minimum length set to %d\n", options.mkv_minlen, options.mkv_maxlen, options.mkv_maxlen);
+			if (options.rootnode)
+				fprintf(stderr, "Warning: minimum length(%d) < maximum length(%d), minimum length set to %d\n", options.mkv_minlen, options.mkv_maxlen, options.mkv_maxlen);
 			options.mkv_minlen = options.mkv_maxlen;
 		}
 	}
-
-#ifdef HAVE_MPI
-	if (options.flags & (FLG_STDIN_CHK | FLG_SHOW_CHK | FLG_MAKECHR_CHK ) && (mpi_p > 1)) {
-		if (mpi_id == 0) fprintf(stderr, "Chosen mode not suitable for running on multiple nodes\n");
-		error();
-	}
-#endif
 
 	if ( (options.flags & FLG_SHOW_SET) && options.showuncracked_str) {
 		if (!strcasecmp( options.showuncracked_str, "left"))  {
@@ -531,10 +632,8 @@ void opt_init(char *name, int argc, char **argv)
 			sscanf(&field_sep_char_string[2], "%x", &xTmp);
 			if (!xTmp || xTmp > 255)
 			{
-#ifdef HAVE_MPI
-				if (mpi_id == 0)
-#endif
-				fprintf (stderr, "trying to use an invalid field separator char:  %s\n", field_sep_char_string);
+				if (options.rootnode)
+					fprintf (stderr, "trying to use an invalid field separator char:  %s\n", field_sep_char_string);
 				error();
 			}
 			options.field_sep_char = (char)xTmp;
@@ -542,10 +641,8 @@ void opt_init(char *name, int argc, char **argv)
 
 		options.loader.field_sep_char = options.field_sep_char;
 		if (options.loader.field_sep_char != ':')
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf (stderr, "using field sep char '%c' (0x%02x)\n", options.field_sep_char, options.field_sep_char);
+			if (options.rootnode)
+				fprintf (stderr, "using field sep char '%c' (0x%02x)\n", options.field_sep_char, options.field_sep_char);
 	}
 
 	rec_argc = argc; rec_argv = argv;

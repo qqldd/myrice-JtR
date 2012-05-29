@@ -35,6 +35,7 @@
 #include "formats.h"
 #include "loader.h"
 #include "logger.h"
+#include "recovery.h"
 #include "status.h"
 #include "options.h"
 #include "config.h"
@@ -302,10 +303,8 @@ static void john_register_all(void)
 #endif
 
 	if (!fmt_list) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Unknown ciphertext format name requested\n");
+		if (options.rootnode)
+			fprintf(stderr, "Unknown ciphertext format name requested\n");
 		error();
 	}
 }
@@ -356,6 +355,64 @@ static char *john_loaded_counts(void)
 		database.salt_count);
 
 	return s_loaded_counts;
+}
+
+int john_pids[100];
+
+static void john_fork(int who)
+{
+	int i, pid;
+
+	if (who == 1) {
+		i = 0;
+		goto parent;
+	}
+
+	rec_done(1);
+
+	for (i = 1; i < options.fork; i++)
+	switch ((pid = fork())) {
+	case -1:
+		perror("fork");
+		break;
+
+	case 0:
+		options.rootnode = 0;
+		options.node_min += i;
+last:
+		options.node_max = options.node_min;
+parent:
+		{
+			static char *orig = NULL;
+			if (!orig)
+				orig = rec_name;
+			char *s = mem_alloc_tiny(strlen(orig) + 20,
+			    MEM_ALIGN_NONE);
+			sprintf(s, "%s-%u", orig, options.node_min);
+			rec_name = s;
+			if ((options.flags & FLG_RESTORE_CHK) ||
+			    (i && rec_restoring_now))
+				rec_restore_args(1);
+		}
+#if 0
+		{
+			char *old = options.session, *s;
+			if (!old)
+				old = "john";
+			s = mem_alloc_tiny(strlen(old) + 20, MEM_ALIGN_NONE);
+			sprintf(s, "%s-%u", old, i + 1);
+			options.session = s;
+		}
+#endif
+		return;
+
+	default:
+		if (i < 100)
+			john_pids[i - 1] = pid;
+	}
+
+	i = 0;
+	goto last;
 }
 
 static void john_load(void)
@@ -501,6 +558,11 @@ static void john_load(void)
 
 		if ((options.flags & FLG_PWD_REQ) && !database.salts) exit(0);
 	}
+
+	if (options.fork > 1 &&
+	    (options.flags & (FLG_INC_CHK | FLG_WORDLIST_CHK | FLG_MKV_CHK |
+	                      FLG_EXTERNAL_CHK | FLG_SINGLE_CHK)))
+		john_fork(0);
 }
 
 #if CPU_DETECT
@@ -541,6 +603,9 @@ static void john_init(char *name, int argc, char **argv)
 	if (argc < 2)
 		john_register_all(); /* for printing by opt_init() */
 	opt_init(name, argc, argv);
+
+	if (options.fork > 1 && (options.flags & FLG_RESTORE_CHK))
+		john_fork(1);
 
 	if (options.listconf && !strcasecmp(options.listconf, "?"))
 	{
@@ -713,12 +778,12 @@ static void john_run(void)
 		    omp_get_max_threads() > 1 && mpi_p > 1) {
 			if(cfg_get_bool(SECTION_OPTIONS, NULL, "MPIOMPmutex", 1)) {
 				if(cfg_get_bool(SECTION_OPTIONS, NULL, "MPIOMPverbose", 1) &&
-				   mpi_id == 0)
+				   options.rootnode)
 					fprintf(stderr, "MPI in use, disabling OMP (see doc/README.mpi)\n");
 				omp_set_num_threads(1);
 			} else
 				if(cfg_get_bool(SECTION_OPTIONS, NULL, "MPIOMPverbose", 1) &&
-				   mpi_id == 0)
+				   options.rootnode)
 					fprintf(stderr, "Note: Running both MPI and OMP (see doc/README.mpi)\n");
 		}
 #endif
@@ -751,28 +816,20 @@ static void john_run(void)
 			switch (database.options->flags &
 			    (DB_SPLIT | DB_NODUP)) {
 			case DB_SPLIT:
-#ifdef HAVE_MPI
-				if (mpi_id == 0)
-#endif
-				fprintf(stderr, "%s%s\n", might, partial);
+				if (options.rootnode)
+					fprintf(stderr, "%s%s\n", might, partial);
 				break;
 			case DB_NODUP:
-#ifdef HAVE_MPI
-				if (mpi_id == 0)
-#endif
-				fprintf(stderr, "%s%s\n", might, not_all);
+				if (options.rootnode)
+					fprintf(stderr, "%s%s\n", might, not_all);
 				break;
 			case (DB_SPLIT | DB_NODUP):
-#ifdef HAVE_MPI
-				if (mpi_id == 0)
-#endif
-				fprintf(stderr, "%s%s and%s\n",
+				if (options.rootnode)
+					fprintf(stderr, "%s%s and%s\n",
 				    might, partial, not_all);
 			}
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fputs("Use the \"--show\" option to display all of "
+			if (options.rootnode)
+			    fputs("Use the \"--show\" option to display all of "
 			    "the cracked passwords reliably\n", stderr);
 		}
 	}

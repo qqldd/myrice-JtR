@@ -66,9 +66,6 @@
 #include "md5.h"
 #include "loader.h"
 #include "options.h"
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
 
 #define DEFINE_MD5_PREDICATE_POINTERS
 #include "dynamic.h"
@@ -628,10 +625,8 @@ int dynamic_LOAD_PARSER_FUNCTIONS(int which, struct fmt_main *pFmt)
 
 	if (!dynamic_LOAD_PARSER_SIGNATURE(which))
 	{
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Could not find section [List.Generic:dynamic_%d] in the john.ini/conf file\n", which);
+		if (options.rootnode)
+			fprintf(stderr, "Could not find section [List.Generic:dynamic_%d] in the john.ini/conf file\n", which);
 		error();
 	}
 
@@ -671,10 +666,8 @@ int dynamic_LOAD_PARSER_FUNCTIONS(int which, struct fmt_main *pFmt)
 	{
 		if (!dynamic_LOAD_PARSER_FUNCTIONS_LoadLINE(gen_line))
 		{
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			fprintf(stderr, "Error parsing section [List.Generic:dynamic_%d]\nError in line %d file is %s\n", which, gen_line->number, gen_line->cfg_name);
+			if (options.rootnode)
+				fprintf(stderr, "Error parsing section [List.Generic:dynamic_%d]\nError in line %d file is %s\n", which, gen_line->number, gen_line->cfg_name);
 			error();
 		}
 		gen_line = gen_line->next;

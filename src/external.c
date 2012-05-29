@@ -19,11 +19,9 @@
 #include "config.h"
 #include "cracker.h"
 #include "external.h"
-#ifdef HAVE_MPI
-#include "john-mpi.h"
+#include "options.h"
 
-static unsigned long long mpi_line = 0;
-#endif
+static unsigned long long node_line = 0;
 
 static char int_word[PLAINTEXT_BUFFER_SIZE];
 static char rec_word[PLAINTEXT_BUFFER_SIZE];
@@ -114,20 +112,16 @@ void ext_init(char *mode, struct db_main *db)
 	}
 
 	if (!(ext_source = cfg_get_list(SECTION_EXT, mode))) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Unknown external mode: %s\n", mode);
+		if (options.rootnode)
+			fprintf(stderr, "Unknown external mode: %s\n", mode);
 		error();
 	}
 
 	if (c_compile(ext_getchar, ext_rewind, &ext_globals)) {
 		if (!ext_line) ext_line = ext_source->tail;
 
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Compiler error in %s at line %d: %s\n",
+		if (options.rootnode)
+		    fprintf(stderr, "Compiler error in %s at line %d: %s\n",
 			ext_line->cfg_name, ext_line->number,
 			c_errors[c_errno]);
 		error();
@@ -140,24 +134,18 @@ void ext_init(char *mode, struct db_main *db)
 	f_filter = c_lookup("filter");
 
 	if ((ext_flags & EXT_REQ_GENERATE) && !f_generate) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
+		if (options.rootnode)
 		fprintf(stderr, "No generate() for external mode: %s\n", mode);
 		error();
 	}
 	if ((ext_flags & EXT_REQ_FILTER) && !f_filter) {
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
+		if (options.rootnode)
 		fprintf(stderr, "No filter() for external mode: %s\n", mode);
 		error();
 	}
 	if ((ext_flags & (EXT_USES_GENERATE | EXT_USES_FILTER)) ==
 	    EXT_USES_FILTER && f_generate)
-#ifdef HAVE_MPI
-	if (mpi_id == 0)
-#endif
+		if (options.rootnode)
 		fprintf(stderr, "Warning: external mode defines generate(), "
 		    "but is only used for filter()\n");
 
@@ -243,9 +231,8 @@ static int restore_state(FILE *file)
 	} while ((*internal++ = *external++ = c));
 
 	c_execute(c_lookup("restore"));
-#ifdef HAVE_MPI
-	mpi_line = mpi_id + 1;  // We just need the correct modulus
-#endif
+
+	node_line = options.node_min + 1;  // We just need the correct modulus
 
 	return 0;
 }
@@ -259,12 +246,25 @@ void do_external_crack(struct db_main *db)
 {
 	unsigned char *internal;
 	c_int *external;
+	int for_node, skip;
 
 	log_event("Proceeding with external mode: %.100s", ext_mode);
 
-#ifdef HAVE_MPI
-	if (mpi_p > 1) log_event("MPI: each node will process 1/%u of candidates", mpi_p);
-#endif
+	if (options.node_count > 1)
+		log_event("This node will process %d/%d of candidates",
+		          options.node_max - options.node_min + 1,
+		          options.node_count);
+	if (options.rootnode)
+		fprintf(stderr,"Each node processing 1/%d of candidates.\n",
+		        options.node_count);
+
+	if (!f_generate) {
+		log_event("! No generate() function defined");
+		if (options.rootnode)
+			fprintf(stderr, "No generate() for external mode: %s\n",
+			        ext_mode);
+		error();
+	}
 
 	internal = (unsigned char *)int_word;
 	external = ext_word;
@@ -290,10 +290,13 @@ void do_external_crack(struct db_main *db)
 				continue;
 		}
 
-#ifdef HAVE_MPI
-		// MPI distribution
-		if (mpi_line++ % mpi_p != mpi_id) continue;
-#endif
+		// Node distribution: leapfrog (scales poorly)
+		for_node = node_line++ % options.node_count + 1;
+		skip = for_node < options.node_min ||
+			for_node > options.node_max;
+		if (skip)
+			continue;
+
 		int_word[0] = ext_word[0];
 		if ((int_word[1] = ext_word[1])) {
 			internal = (unsigned char *)&int_word[2];

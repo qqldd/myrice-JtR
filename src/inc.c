@@ -1,6 +1,6 @@
 /*
  * This file is part of John the Ripper password cracker,
- * Copyright (c) 1996-2006 by Solar Designer
+ * Copyright (c) 1996-2006,2011 by Solar Designer
  *
  * ...with a change in the jumbo patch, by JoMo-Kun
  */
@@ -19,6 +19,7 @@
 #include "logger.h"
 #include "status.h"
 #include "recovery.h"
+#include "options.h"
 #include "config.h"
 #include "charset.h"
 #include "external.h"
@@ -28,9 +29,6 @@ extern struct fmt_main fmt_LM;
 extern struct fmt_main fmt_NETLM;
 extern struct fmt_main fmt_NETHALFLM;
 
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
 #include <math.h>
 
 static unsigned long long try, cand;
@@ -60,35 +58,28 @@ typedef char (*chars_table)
 static int rec_compat;
 static int rec_entry;
 static int rec_numbers[CHARSET_LENGTH];
+static int rec_counts[CHARSET_LENGTH][CHARSET_LENGTH];
 
 static int entry;
 static int numbers[CHARSET_LENGTH];
+static int counts[CHARSET_LENGTH][CHARSET_LENGTH];
 
 static void save_state(FILE *file)
 {
-	int pos;
-	unsigned tmp;
-	unsigned long long tmpLL;
+	int length, pos;
 
 	fprintf(file, "%d\n%d\n%d\n", rec_entry, rec_compat, CHARSET_LENGTH);
 	for (pos = 0; pos < CHARSET_LENGTH; pos++)
 		fprintf(file, "%d\n", rec_numbers[pos]);
-	// number added 'after' array, to preserve the try count, so that we can later know the 
-	// values tested, to report progress.  Before this, we could NOT report.
-	if (cand) {
-		tmpLL = try;
-		tmp = (unsigned) (tmpLL>>32);
-		fprintf(file, "%u\n", tmp);
-		tmp = (unsigned)tmpLL;
-		fprintf(file, "%u\n", tmp);
-	}
+	for (length = 0; length < CHARSET_LENGTH; length++)
+	for (pos = 0; pos <= length; pos++)
+		fprintf(file, "%d\n", rec_counts[length][pos]);
 }
 
 static int restore_state(FILE *file)
 {
 	int length;
 	int pos;
-	unsigned tmp;
 
 	if (fscanf(file, "%d\n", &rec_entry) != 1) return 1;
 	rec_compat = 1;
@@ -103,14 +94,15 @@ static int restore_state(FILE *file)
 		if (fscanf(file, "%d\n", &rec_numbers[pos]) != 1) return 1;
 		if ((unsigned int)rec_numbers[pos] >= CHARSET_SIZE) return 1;
 	}
-	tmp = 0;
-	if (fscanf(file, "%u\n", &tmp) != 1) { cand = 0; return 0; } // progress reporting don't work after resume so we mute it
-	try = tmp;
-	try <<= 32;
-	tmp = 0;
-	if (fscanf(file, "%u\n", &tmp) != 1) { cand = 0; try = 0; return 0; } // progress reporting don't work after resume so we mute it
-	try += tmp;
+	for (length = 0; length < CHARSET_LENGTH; length++)
+	for (pos = 0; pos <= length; pos++) {
+		if (fscanf(file, "%d\n", &rec_counts[length][pos]) != 1)
+			return 1;
+		if ((unsigned int)rec_counts[length][pos] >= CHARSET_SIZE)
+			return 1;
+	}
 
+	cand = 0; // progress reporting don't work after resume so we mute it
 	return 0;
 }
 
@@ -118,15 +110,14 @@ static void fix_state(void)
 {
 	rec_entry = entry;
 	memcpy(rec_numbers, numbers, sizeof(rec_numbers));
+	memcpy(rec_counts, counts, sizeof(rec_counts));
 }
 
 static void inc_format_error(char *charset)
 {
 	log_event("! Incorrect charset file format: %.100s", charset);
-#ifdef HAVE_MPI
-	if (mpi_id == 0)
-#endif
-	fprintf(stderr, "Incorrect charset file format: %s\n", charset);
+	if (options.rootnode)
+		fprintf(stderr, "Incorrect charset file format: %s\n", charset);
 	error();
 }
 
@@ -326,6 +317,8 @@ static int inc_key_loop(int length, int fixed, int count,
 	char key_e[PLAINTEXT_BUFFER_SIZE];
 	char *key;
 	char *chars_cache;
+	int *counts_length;
+	int counts_cache;
 	int numbers_cache;
 	int pos;
 
@@ -333,6 +326,9 @@ static int inc_key_loop(int length, int fixed, int count,
 	numbers[fixed] = count;
 
 	chars_cache = NULL;
+
+	counts_length = counts[length];
+	counts_cache = counts_length[length];
 
 update_all:
 	pos = 0;
@@ -370,19 +366,20 @@ update_last:
 
 	pos = length;
 	if (fixed < length) {
-		if (++numbers_cache <= count) {
+		if (++numbers_cache <= counts_cache) {
 			if (length >= 2) goto update_last;
 			numbers[length] = numbers_cache;
 			goto update_ending;
 		}
 		numbers[pos--] = 0;
 		while (pos > fixed) {
-			if (++numbers[pos] <= count) goto update_ending;
+			if (++numbers[pos] <= counts_length[pos])
+				goto update_ending;
 			numbers[pos--] = 0;
 		}
 	}
 	while (pos-- > 0) {
-		if (++numbers[pos] < count) goto update_ending;
+		if (++numbers[pos] <= counts_length[pos]) goto update_ending;
 		numbers[pos] = 0;
 	}
 
@@ -441,10 +438,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 
 	if (!(charset = cfg_get_param(SECTION_INC, mode, "File"))) {
 		log_event("! No charset defined");
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "No charset defined for mode: %s\n", mode);
+		if (options.rootnode)
+			fprintf(stderr, "No charset defined for mode: %s\n", mode);
 		error();
 	}
 
@@ -459,10 +454,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	if (min_length > max_length) {
 		log_event("! MinLen = %d exceeds MaxLen = %d",
 			min_length, max_length);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "MinLen = %d exceeds MaxLen = %d\n",
+		if (options.rootnode)
+		    fprintf(stderr, "MinLen = %d exceeds MaxLen = %d\n",
 			min_length, max_length);
 		error();
 	}
@@ -470,10 +463,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	if (min_length > db->format->params.plaintext_length) {
 		log_event("! MinLen = %d is too large for this hash type",
 			min_length);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "MinLen = %d exceeds the maximum possible "
+		if (options.rootnode)
+		    fprintf(stderr, "MinLen = %d exceeds the maximum possible "
 			"length for the current hash type (%d)\n",
 			min_length, db->format->params.plaintext_length);
 		error();
@@ -482,10 +473,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	if (max_length > db->format->params.plaintext_length) {
 		log_event("! MaxLen = %d is too large for this hash type",
 			max_length);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: "
+		if (options.rootnode)
+		    fprintf(stderr, "Warning: "
 			"MaxLen = %d is too large for the current hash type, "
 			"reduced to %d\n",
 			max_length, db->format->params.plaintext_length);
@@ -495,10 +484,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	if (max_length > CHARSET_LENGTH) {
 		log_event("! MaxLen = %d exceeds the compile-time limit of %d",
 			max_length, CHARSET_LENGTH);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr,
+		if (options.rootnode)
+		    fprintf(stderr,
 			"\n"
 			"MaxLen = %d exceeds the compile-time limit of %d\n\n"
 			"There are several good reasons why you probably don't "
@@ -532,10 +519,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	if (header->min != CHARSET_MIN || header->max != CHARSET_MAX ||
 	    header->length != CHARSET_LENGTH) {
 		log_event("! Incompatible charset file: %.100s", charset);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Incompatible charset file: %s\n", charset);
+		if (options.rootnode)
+			fprintf(stderr, "Incompatible charset file: %s\n", charset);
 		error();
 	}
 
@@ -567,10 +552,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 		log_event("! Extra characters not in compile-time "
 			"specified range ('\\x%02x' to '\\x%02x')",
 			CHARSET_MIN, CHARSET_MAX);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Extra characters not in compile-time "
+		if (options.rootnode)
+		    fprintf(stderr, "Extra characters not in compile-time "
 			"specified range ('\\x%02x' to '\\x%02x')\n",
 			CHARSET_MIN, CHARSET_MAX);
 		error();
@@ -588,10 +571,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 
 	if ((unsigned int)max_count > real_count) {
 		log_event("! Only %u characters available", real_count);
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: only %u characters available\n",
+		if (options.rootnode)
+		    fprintf(stderr, "Warning: only %u characters available\n",
 			real_count);
 	}
 
@@ -606,10 +587,8 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	case 1:
 		log_event("! Mixed-case charset, "
 			"but the hash type is case-insensitive");
-#ifdef HAVE_MPI
-		if (mpi_id == 0)
-#endif
-		fprintf(stderr, "Warning: mixed-case charset, "
+		if (options.rootnode)
+		    fprintf(stderr, "Warning: mixed-case charset, "
 			"but the current hash type is case-insensitive;\n"
 			"some candidate passwords may be unnecessarily "
 			"tried more than once.\n");
@@ -623,13 +602,9 @@ void do_incremental_crack(struct db_main *db, char *mode)
 		chars[pos] = (chars_table)mem_alloc(sizeof(*chars[0]));
 
 	rec_compat = 0;
-#ifdef HAVE_MPI
-	/* *ptr has to start at different positions so they don't overlap */
-	rec_entry = mpi_id;
-#else
 	rec_entry = 0;
-#endif
 	memset(rec_numbers, 0, sizeof(rec_numbers));
+	memset(rec_counts, 0, sizeof(rec_counts));
 
 	status_init(get_progress, 0);
 
@@ -638,6 +613,7 @@ void do_incremental_crack(struct db_main *db, char *mode)
 
 	ptr = header->order + (entry = rec_entry) * 3;
 	memcpy(numbers, rec_numbers, sizeof(numbers));
+	memcpy(counts, rec_counts, sizeof(counts));
 
 	crk_init(db, fix_state, NULL);
 
@@ -645,14 +621,15 @@ void do_incremental_crack(struct db_main *db, char *mode)
 
 	entry--;
 	while (ptr < &header->order[sizeof(header->order) - 1]) {
+		int skip = 0;
+		if (options.node_count) {
+			int for_node = entry % options.node_count + 1;
+			skip = for_node < options.node_min ||
+			    for_node > options.node_max;
+		}
 		entry++;
 		length = *ptr++; fixed = *ptr++; count = *ptr++;
 
-#ifdef HAVE_MPI
-		/* increment *ptr with the number of processors after this */
-		ptr = ptr + (3 * (mpi_p - 1));
-		entry = entry + mpi_p - 1;
-#endif
 		if (length >= CHARSET_LENGTH ||
 			fixed > length ||
 			count >= CHARSET_SIZE) inc_format_error(charset);
@@ -666,25 +643,52 @@ void do_incremental_crack(struct db_main *db, char *mode)
 			(int)length >= max_length ||
 			(int)count >= max_count) continue;
 
-		if ((int)length != last_length) {
+		if (!skip && (int)length != last_length) {
 			inc_new_length(last_length = length,
 				header, file, charset, char1, char2, chars);
 			last_count = -1;
 		}
-		if ((int)count > last_count)
-			inc_new_count(length, last_count = count, charset,
-				allchars, char1, char2, chars);
+		if (!skip) {
+			int i, max_count = 0;
+			for (i = 0; i <= length; i++)
+				if (counts[length][i] > max_count)
+					max_count = counts[length][i];
+			if (count > max_count)
+				max_count = count;
+			if (max_count > last_count) {
+				last_count = max_count;
+				inc_new_count(length, max_count, charset,
+					allchars, char1, char2, chars);
+			}
+		}
 
 		if (!length && !min_length) {
 			min_length = 1;
-#ifdef HAVE_MPI
-			if (mpi_id == 0)
-#endif
-			if (crk_process_key("")) break;
+			if (!skip && crk_process_key("")) break;
 		}
 
+#if 0
+		counts[length][fixed] = count;
+#endif
+		if (count && entry != rec_entry)
+			counts[length][fixed]++;
+		if (counts[length][fixed] != count) {
+			fprintf(stderr, "Unexpected count: %d != %d\n",
+				counts[length][fixed] + 1, count + 1);
+			log_event("! Unexpected count: %d != %d",
+				counts[length][fixed] + 1, count + 1);
+			error();
+		}
+
+		if (skip)
+			continue;
+
+#if 0
+		printf("- Trying length %d, fixed @%d, character count %d\n",
+			length + 1, fixed + 1, counts[length][fixed] + 1);
+#endif
 		log_event("- Trying length %d, fixed @%d, character count %d",
-			length + 1, fixed + 1, count + 1);
+			length + 1, fixed + 1, counts[length][fixed] + 1);
 
 		if (inc_key_loop(length, fixed, count, char1, char2, chars))
 			break;

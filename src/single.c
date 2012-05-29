@@ -2,7 +2,7 @@
  * This file is part of John the Ripper password cracker,
  * Copyright (c) 1996-99,2003,2004,2006,2010,2012 by Solar Designer
  *
- * ...with changes in the jumbo patch, by JimF.
+ * ...with changes in the jumbo patch, by magnum & JimF.
  */
 
 #include <stdio.h>
@@ -20,10 +20,8 @@
 #include "rules.h"
 #include "external.h"
 #include "cracker.h"
-#ifdef HAVE_MPI
-#include "john-mpi.h"
-#endif
 #include "unicode.h"
+#include "options.h"
 
 static int progress = 0;
 static int rec_rule;
@@ -122,16 +120,15 @@ static void single_init(void)
 
 	log_event("- %d preprocessed word mangling rules", rule_count);
 
-#ifdef HAVE_MPI
-	if (mpi_p > 1) {
-		log_event("MPI hack active: processsing 1/%d of rules, total %d for "
-		    "this node", mpi_p, (rule_count / mpi_p) +
-		    (rule_count % mpi_p > mpi_id ? 1 : 0));
-		if (mpi_id == 0) fprintf(stderr,"MPI: each node processing 1/%d of %d "
-		    "rules. (%seven split)\n",
-		    mpi_p, rule_count, rule_count % mpi_p ? "un" : "");
+	if (options.node_count > 1) {
+		log_event("Node hack active: processing %d/%d of %d rules",
+		          options.node_max - options.node_min + 1,
+		          options.node_count, rule_count);
+		if (options.rootnode)
+			fprintf(stderr,"Each node processing 1/%d of %d rules.\n",
+			        options.node_count, rule_count);
 	}
-#endif
+
 	status_init(get_progress, 0);
 
 	rec_restore_mode(restore_state);
@@ -413,13 +410,16 @@ static void single_run(void)
 
 	saved_min = rec_rule;
 	while ((prerule = rpp_next(rule_ctx))) {
-#ifdef HAVE_MPI
-		// MPI distribution: leapfrog rules
-		if (rule_number % mpi_p != mpi_id) {
+
+		// Node distribution: leapfrog rules
+		int for_node = rule_number % options.node_count + 1;
+		int skip = for_node < options.node_min ||
+			for_node > options.node_max;
+		if (skip) {
 			rule_number++;
 			continue;
 		}
-#endif
+
 		if (!(rule = rules_reject(prerule, 0, NULL, single_db))) {
 			log_event("- Rule #%d: '%.100s' rejected",
 				++rule_number, prerule);

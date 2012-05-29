@@ -5,7 +5,8 @@
  * ...with changes in the jumbo patch for mingw and MSC and
  * introducing field_sep, by JimF.
  *
- * ...and with even more changes in the jumbo patch for MPI support, by magnum.
+ * ...and with even more changes in the jumbo patch for MPI
+ * support, by magnum.
  */
 
 #define _XOPEN_SOURCE /* for fileno(3) and fsync(2) */
@@ -143,16 +144,14 @@ static int log_time(void)
 
 	time = pot.fd >= 0 ? status_get_time() : status_restored_time;
 
-#ifdef HAVE_MPI
-	if (mpi_p > 1)
-		return (int)sprintf(log.ptr, "%u %u:%02u:%02u:%02u ", mpi_id,
+	if (options.node_count > 1)
+		return (int)sprintf(log.ptr, "%u %u:%02u:%02u:%02u ", options.node_min,
 		    time / 86400, time % 86400 / 3600,
 		    time % 3600 / 60, time % 60);
 	else
-#endif
-	return (int)sprintf(log.ptr, "%u:%02u:%02u:%02u ",
-		time / 86400, time % 86400 / 3600,
-		time % 3600 / 60, time % 60);
+		return (int)sprintf(log.ptr, "%u:%02u:%02u:%02u ",
+		    time / 86400, time % 86400 / 3600,
+		    time % 3600 / 60, time % 60);
 }
 
 void log_init(char *log_name, char *pot_name, char *session)
