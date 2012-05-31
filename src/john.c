@@ -561,7 +561,7 @@ static void john_load(void)
 
 	if (options.fork > 1 &&
 	    (options.flags & (FLG_INC_CHK | FLG_WORDLIST_CHK | FLG_MKV_CHK |
-	                      FLG_EXTERNAL_CHK | FLG_SINGLE_CHK)))
+	                    FLG_EXTERNAL_CHK | FLG_SINGLE_CHK | FLG_BATCH_CHK)))
 		john_fork(0);
 }
 
