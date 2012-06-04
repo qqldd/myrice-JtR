@@ -109,7 +109,7 @@ static char *split(char *ciphertext, int index)
 		return ciphertext;
 	else if (!strncmp(ciphertext, FORMAT_TAG_CP, TAG_CP_LENGTH))
 		return ciphertext;
-	
+
 	memcpy(out, FORMAT_TAG, TAG_LENGTH);
 	memcpy(out + TAG_LENGTH, ciphertext, CIPHERTEXT_LENGTH + 1);
 	return out;

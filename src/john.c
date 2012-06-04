@@ -118,6 +118,10 @@ extern struct fmt_main fmt_cryptsha256;
 extern struct fmt_main fmt_cryptsha512;
 #endif
 
+#if OPENSSL_VERSION_NUMBER >= 0x10000000
+extern struct fmt_main fmt_django;
+#endif
+
 #ifdef HAVE_SKEY
 extern struct fmt_main fmt_SKEY;
 #endif
@@ -141,6 +145,7 @@ extern struct fmt_main fmt_opencl_wpapsk;
 extern struct fmt_main fmt_opencl_xsha512;
 extern struct fmt_main fmt_opencl_rawsha512;
 extern struct fmt_main fmt_opencl_bf;
+extern struct fmt_main fmt_opencl_pwsafe;
 #endif
 #ifdef HAVE_CUDA
 extern struct fmt_main fmt_cuda_cryptmd5;
@@ -154,7 +159,7 @@ extern struct fmt_main fmt_cuda_rawsha224;
 extern struct fmt_main fmt_cuda_xsha512;
 extern struct fmt_main fmt_cuda_wpapsk;
 extern struct fmt_main fmt_cuda_rawsha512;
-
+extern struct fmt_main fmt_cuda_pwsafe;
 #endif
 
 extern struct fmt_main fmt_ssh;
@@ -244,6 +249,10 @@ static void john_register_all(void)
 	john_register_one(&fmt_cryptsha512);
 #endif
 
+#if OPENSSL_VERSION_NUMBER >= 0x10000000
+	john_register_one(&fmt_django);
+#endif
+
 #ifdef HAVE_NSS
 	john_register_one(&mozilla_fmt);
 #endif
@@ -278,6 +287,7 @@ static void john_register_all(void)
 	john_register_one(&fmt_opencl_xsha512);
 	john_register_one(&fmt_opencl_rawsha512);
 	john_register_one(&fmt_opencl_bf);
+	john_register_one(&fmt_opencl_pwsafe);
 #endif
 
 #ifdef HAVE_CUDA
@@ -292,7 +302,7 @@ static void john_register_all(void)
 	john_register_one(&fmt_cuda_xsha512);
 	john_register_one(&fmt_cuda_wpapsk);
 	john_register_one(&fmt_cuda_rawsha512);
-
+	john_register_one(&fmt_cuda_pwsafe);
 #endif
 
 #ifdef HAVE_DL
@@ -524,10 +534,10 @@ static void john_load(void)
 		if (database.password_count) {
 			if (database.format->params.flags & FMT_UNICODE)
 				options.store_utf8 = cfg_get_bool(SECTION_OPTIONS,
-			        NULL, "UnicodeStoreUTF8", 0);
+			        SUBSECTION_JUMBO, "UnicodeStoreUTF8", 0);
 			else
 				options.store_utf8 = cfg_get_bool(SECTION_OPTIONS,
-			        NULL, "CPstoreUTF8", 0);
+			        SUBSECTION_JUMBO, "CPstoreUTF8", 0);
 		}
 		if (!options.utf8) {
 			if (options.report_utf8 && options.log_passwords)
@@ -727,6 +737,10 @@ static void john_init(char *name, int argc, char **argv)
 		cfg_print_subsections(options.listconf, NULL, NULL);
 		exit(0);
 	}
+	/* This is --crack-status. We toggle here, so if it's enabled in
+	   john.conf, we can disable it using the command line option */
+	if (cfg_get_bool(SECTION_OPTIONS, SUBSECTION_JUMBO, "CrackStatus", 0))
+		options.flags ^= FLG_CRKSTAT;
 
 	initUnicode(UNICODE_UNICODE); /* Init the unicode system */
 
@@ -776,8 +790,8 @@ static void john_run(void)
 #if defined(HAVE_MPI) && defined(_OPENMP)
 		if (database.format->params.flags & FMT_OMP &&
 		    omp_get_max_threads() > 1 && mpi_p > 1) {
-			if(cfg_get_bool(SECTION_OPTIONS, NULL, "MPIOMPmutex", 1)) {
-				if(cfg_get_bool(SECTION_OPTIONS, NULL, "MPIOMPverbose", 1) &&
+			if(cfg_get_bool(SECTION_OPTIONS, SUBSECTION_MPI, "MPIOMPmutex", 1)) {
+				if(cfg_get_bool(SECTION_OPTIONS, SUBSECTION_MPI, "MPIOMPverbose", 1) &&
 				   options.rootnode)
 					fprintf(stderr, "MPI in use, disabling OMP (see doc/README.mpi)\n");
 				omp_set_num_threads(1);

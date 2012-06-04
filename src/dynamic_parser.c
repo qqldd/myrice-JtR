@@ -64,7 +64,6 @@
 #include "formats.h"
 #include "config.h"
 #include "md5.h"
-#include "loader.h"
 #include "options.h"
 
 #define DEFINE_MD5_PREDICATE_POINTERS
