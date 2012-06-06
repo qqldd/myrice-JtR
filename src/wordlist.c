@@ -620,7 +620,7 @@ SKIP_MEM_MAP_LOAD:;
 				int skip = for_node < options.node_min ||
 				    for_node > options.node_max;
 				if (skip)
-					goto next_rule;
+					goto EndOfFile;
 			}
 			if ((rule = rules_reject(prerule, -1, last, db))) {
 				if (strcmp(prerule, rule))
@@ -653,7 +653,7 @@ SKIP_MEM_MAP_LOAD:;
 			else {
 				do {
 					if (!fgetl(((char*)line), LINE_BUFFER_SIZE, word_file))
-						goto next_rule;
+						goto EndOfFile;
 				} while (!strncmp(line, "#!comment", 9));
 
 				if (potfile)
@@ -691,7 +691,7 @@ SKIP_MEM_MAP_LOAD:;
 			}
 		}
 
-next_rule:
+EndOfFile:
 		if (rules) {
 			if (!(rule = rpp_next(&ctx)))
 				break;
