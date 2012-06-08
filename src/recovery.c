@@ -227,7 +227,7 @@ static void rec_format_error(char *fn)
 void rec_restore_args(int lock)
 {
 	char line[LINE_BUFFER_SIZE];
-	int index, argc;
+	int index, argc, argn;
 	char **argv;
 	char *save_rec_name;
 
@@ -254,12 +254,15 @@ void rec_restore_args(int lock)
 
 	argv[0] = "john";
 
-	for (index = 1; index < argc; index++)
-	if (fgetl(line, sizeof(line), rec_file))
-		argv[index] = str_alloc_copy(line);
-	else
+	for (argn = index = 1; index < argc; index++)
+	if (fgetl(line, sizeof(line), rec_file)) {
+		if (!strncmp(line, "-fork", 5) || !strncmp(line, "--fork", 6))
+			continue;
+		argv[argn++] = str_alloc_copy(line);
+	} else
 		rec_format_error("fgets");
 
+	argc = argn;
 	argv[argc] = NULL;
 
 	save_rec_name = rec_name;

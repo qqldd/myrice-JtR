@@ -400,7 +400,7 @@ parent:
 				orig = rec_name;
 			char *s = mem_alloc_tiny(strlen(orig) + 20,
 			    MEM_ALIGN_NONE);
-			sprintf(s, "%s-%u", orig, options.node_min);
+			sprintf(s, "%s.%u", orig, options.node_min - 1);
 			rec_name = s;
 			if ((options.flags & FLG_RESTORE_CHK) ||
 			    (i && rec_restoring_now))
@@ -412,7 +412,7 @@ parent:
 			if (!old)
 				old = "john";
 			s = mem_alloc_tiny(strlen(old) + 20, MEM_ALIGN_NONE);
-			sprintf(s, "%s-%u", old, i + 1);
+			sprintf(s, "%s.%u", old, i);
 			options.session = s;
 		}
 #endif
