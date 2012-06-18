@@ -437,12 +437,19 @@ void do_incremental_crack(struct db_main *db, char *mode)
 	log_event("Proceeding with \"incremental\" mode: %.100s", mode);
 
 	if (!(charset = cfg_get_param(SECTION_INC, mode, "File"))) {
-		log_event("! No charset defined");
-		if (options.rootnode)
-			fprintf(stderr, "No charset defined for mode: %s\n", mode);
-		error();
+		if(cfg_get_section(SECTION_INC, mode) == NULL) {
+			log_event("! Unknown incremental mode: %s", mode);
+			if (options.rootnode)
+				fprintf(stderr, "Unknown incremental mode: %s\n", mode);
+			error();
+		}
+		else {
+			log_event("! No charset defined");
+			if (options.rootnode)
+				fprintf(stderr, "No charset defined for mode: %s\n", mode);
+			error();
+		}
 	}
-
 	extra = cfg_get_param(SECTION_INC, mode, "Extra");
 
 	if ((min_length = cfg_get_int(SECTION_INC, mode, "MinLen")) < 0)

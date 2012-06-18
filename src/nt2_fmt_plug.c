@@ -1,9 +1,9 @@
 /*
- * Alternate NT format
+ * Alternate NT format, with reduced binary size
  *
- * This  software is Copyright © 2011 magnum, and it is hereby released to the
- * general public under the following terms:  Redistribution and use in source
- * and binary forms, with or without modification, are permitted.
+ * This  software is Copyright 2011, 2012 magnum, and it is hereby released to
+ * the general public under the following terms:  Redistribution and use in
+ * source and binary forms, with or without modification, are permitted.
  *
  * Losely based on rawSHA1, by bartavelle
  * and is also using his mmx/sse2/sse-intrinsics functions
@@ -51,7 +51,8 @@
 
 #define CIPHERTEXT_LENGTH		36
 
-#define BINARY_SIZE			16
+#define BINARY_SIZE			16 // get_source()
+#define DIGEST_SIZE			16
 #define SALT_SIZE			0
 
 #ifdef MMX_COEF
@@ -78,11 +79,11 @@ static unsigned int (**buf_ptr);
 static unsigned int total_len;
 #endif
 #else
-static MD4_CTX ctx;
 static int saved_key_length;
 static UTF16 saved_key[PLAINTEXT_LENGTH + 1];
-static ARCH_WORD_32 crypt_key[BINARY_SIZE / 4];
+static ARCH_WORD_32 crypt_key[DIGEST_SIZE / 4];
 #endif
+static MD4_CTX ctx;
 
 // Note: the ISO-8859-1 plaintexts will be replaced in init() if running UTF-8
 static struct fmt_tests tests[] = {
@@ -173,7 +174,7 @@ static void init(struct fmt_main *pFmt)
 	}
 #if MMX_COEF
 	saved_key = mem_calloc_tiny(sizeof(*saved_key) * 64*pFmt->params.max_keys_per_crypt, MEM_ALIGN_SIMD);
-	crypt_key = mem_calloc_tiny(sizeof(*crypt_key) * BINARY_SIZE*pFmt->params.max_keys_per_crypt, MEM_ALIGN_SIMD);
+	crypt_key = mem_calloc_tiny(sizeof(*crypt_key) * DIGEST_SIZE*pFmt->params.max_keys_per_crypt, MEM_ALIGN_SIMD);
 	buf_ptr = mem_calloc_tiny(sizeof(*buf_ptr) * pFmt->params.max_keys_per_crypt, sizeof(*buf_ptr));
 	for (i=0; i<pFmt->params.max_keys_per_crypt; i++)
 		buf_ptr[i] = (unsigned int*)&saved_key[GETPOS(0, i)];
@@ -534,49 +535,6 @@ static char *get_key(int index)
 #endif
 }
 
-static int cmp_all(void *binary, int count) {
-#ifdef MMX_COEF
-	unsigned int x,y=0;
-
-#if MD4_SSE_PARA
-	for(;y<MD4_SSE_PARA*BLOCK_LOOPS;y++)
-#endif
-		for(x=0;x<MMX_COEF;x++)
-		{
-			if( ((ARCH_WORD_32*)binary)[0] == ((ARCH_WORD_32*)crypt_key)[x+y*MMX_COEF*4] )
-				return 1;
-		}
-	return 0;
-#else
-	return !memcmp(binary, crypt_key, BINARY_SIZE);
-#endif
-}
-
-static int cmp_exact(char *source, int count){
-	return (1);
-}
-
-static int cmp_one(void *binary, int index)
-{
-#ifdef MMX_COEF
-	unsigned int x,y;
-	x = index&3;
-	y = index/4;
-
-	if( ((ARCH_WORD_32*)binary)[0] != ((ARCH_WORD_32*)crypt_key)[x+y*MMX_COEF*4] )
-		return 0;
-	if( ((ARCH_WORD_32*)binary)[1] != ((ARCH_WORD_32*)crypt_key)[x+y*MMX_COEF*4+MMX_COEF] )
-		return 0;
-	if( ((ARCH_WORD_32*)binary)[2] != ((ARCH_WORD_32*)crypt_key)[x+y*MMX_COEF*4+2*MMX_COEF] )
-		return 0;
-	if( ((ARCH_WORD_32*)binary)[3] != ((ARCH_WORD_32*)crypt_key)[x+y*MMX_COEF*4+3*MMX_COEF] )
-		return 0;
-	return 1;
-#else
-	return !memcmp(binary, crypt_key, BINARY_SIZE);
-#endif
-}
-
 static void crypt_all(int count) {
 #if defined(MD4_SSE_PARA)
 #if (BLOCK_LOOPS > 1)
@@ -587,7 +545,7 @@ static void crypt_all(int count) {
 #pragma omp parallel for
 #endif
 	for (i = 0; i < BLOCK_LOOPS; i++)
-		SSEmd4body(&saved_key[i*NBKEYS*64], (unsigned int*)&crypt_key[i*NBKEYS*BINARY_SIZE], 1);
+		SSEmd4body(&saved_key[i*NBKEYS*64], (unsigned int*)&crypt_key[i*NBKEYS*DIGEST_SIZE], 1);
 #else
 	SSEmd4body(saved_key, (unsigned int*)crypt_key, 1);
 #endif
@@ -599,6 +557,60 @@ static void crypt_all(int count) {
 	MD4_Update(&ctx, (unsigned char*)saved_key, saved_key_length);
 	MD4_Final((unsigned char*) crypt_key, &ctx);
 //	dump_stuff_msg("crypt_key", crypt_key, 16);
+#endif
+}
+
+static int cmp_all(void *binary, int count) {
+#ifdef MMX_COEF
+	unsigned int x,y=0;
+#ifdef MD4_SSE_PARA
+	for(; y < MD4_SSE_PARA; y++)
+#endif
+		for(x = 0; x < MMX_COEF; x++)
+		{
+			if( ((ARCH_WORD_32*)binary)[0] == ((ARCH_WORD_32*)crypt_key)[y*MMX_COEF*4+x] )
+				return 1;
+		}
+	return 0;
+#else
+	return !memcmp(binary, crypt_key, BINARY_SIZE);
+#endif
+}
+
+static int cmp_one(void *binary, int index)
+{
+#ifdef MMX_COEF
+	unsigned int i,x,y;
+	x = index&(MMX_COEF-1);
+	y = index/MMX_COEF;
+	for(i=0;i<(BINARY_SIZE/4);i++)
+		if ( ((ARCH_WORD_32*)binary)[i] != ((ARCH_WORD_32*)crypt_key)[y*MMX_COEF*4+i*MMX_COEF+x] )
+			return 0;
+	return 1;
+#else
+	return !memcmp(binary, crypt_key, BINARY_SIZE);
+#endif
+}
+
+static int cmp_exact(char *source, int index)
+{
+#if BINARY_SIZE == DIGEST_SIZE
+	return 1;
+#else
+#ifdef MMX_COEF
+	unsigned int i,x,y;
+	ARCH_WORD_32 *full_binary;
+
+	full_binary = (ARCH_WORD_32*)binary(source);
+	x = index&(MMX_COEF-1);
+	y = index/MMX_COEF;
+	for(i=0;i<(DIGEST_SIZE/4);i++)
+		if (full_binary[i] != ((ARCH_WORD_32*)crypt_key)[y*MMX_COEF*4+i*MMX_COEF+x])
+			return 0;
+	return 1;
+#else
+	return !memcmp(binary(source), crypt_key, DIGEST_SIZE);
+#endif
 #endif
 }
 
@@ -670,18 +682,33 @@ static int get_hash_5(int index) { return ((ARCH_WORD_32*)crypt_key)[index] & 0x
 static int get_hash_6(int index) { return ((ARCH_WORD_32*)crypt_key)[index] & 0x7ffffff; }
 #endif
 
+struct fmt_main fmt_magnumNT;
+
 static char *get_source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
 {
-	unsigned char *cpi;
+	unsigned char cipher[DIGEST_SIZE];
+	unsigned char *cpi = pw->binary;
 	char *cpo;
 	int i;
+
+	for (i = 0; i < fmt_magnumNT.params.max_keys_per_crypt; i++) {
+		if (cmp_one(pw->binary, i)) {
+			UTF16 ucskey[PLAINTEXT_LENGTH + 1];
+			char *key = get_key(i);
+
+			enc_to_utf16(ucskey, PLAINTEXT_LENGTH, (UTF8*)key, strlen(key));
+			MD4_Init(&ctx);
+			MD4_Update(&ctx, ucskey, strlen16(ucskey) * 2);
+			MD4_Final(cipher, &ctx);
+			cpi = cipher;
+			break;
+		}
+	}
 
 	strcpy(Buf, "$NT$");
 	cpo = &Buf[4];
 
-	cpi = (unsigned char*)(pw->binary);
-
-	for (i = 0; i < 16; ++i) {
+	for (i = 0; i < DIGEST_SIZE; ++i) {
 		*cpo++ = itoa16[(*cpi)>>4];
 		*cpo++ = itoa16[*cpi&0xF];
 		++cpi;

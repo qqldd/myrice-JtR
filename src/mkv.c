@@ -1,6 +1,8 @@
 /*
  * This software is Copyright © 2010 bartavelle, <bartavelle at bandecon.com>, and it is hereby released to the general public under the following terms:
  * Redistribution and use in source and binary forms, with or without modification, are permitted.
+ *
+ * Added --markov=MODE[:<options>] support and other minor adjustments, 2012, Frank Dittrich
  */
 
 #include <stdio.h>
@@ -236,116 +238,257 @@ static int get_progress(int *hundth_perc)
 	return per;
 }
 
-
-void do_markov_crack(struct db_main *db, char * mkv_param)
+void get_markov_options(struct db_main *db,
+                        char *mkv_param,
+                        unsigned int *mkv_minlevel, unsigned int *mkv_level,
+                        unsigned long long *start, unsigned long long *end,
+                        unsigned int *mkv_minlen, unsigned int *mkv_maxlen,
+                        char **statfile)
 {
-	char * statfile;
-	char statusbuf[256];
-	char *status = statusbuf;
-	unsigned int mkv_minlevel, mkv_level,  mkv_maxlen, mkv_minlen;
-	unsigned long long mkv_start, mkv_end;
-	unsigned long long mkv_size;
-	char * token;
+	char * mode = NULL;
+	char *lvl_token = NULL;
+	char *start_token = NULL;
+	char *end_token = NULL;
+	char *len_token = NULL;
+	char *dummy_token = NULL;
 
-	mkv_level = 0;
-	mkv_start = 0;
-	mkv_end = 0;
-	mkv_maxlen = 0;
-	mkv_minlevel = 0;
-	mkv_minlen = 0;
+	int minlevel, level, minlen, maxlen;
+
+	*start = 0;
+	*end = 0;
+
+	minlevel = -1;
+	level = -1;
+	minlen = -1;
+	maxlen = -1;
+
+/*
+ * FIXME: strsep() is not portable enough!
+ *        I would prefer it over strtok(), to allow something like
+ *        --markov=mode:0:0:0:10-15
+ *        or
+ *        --markov=mode::0:10000000
+ *        --markov=mode::10000000:20000000
+ *        --markov=mode::20000000:30000000
+ *        instead of
+ *        --markov=mode:0:0:10000000
+ *        --markov=mode:0:10000000:20000000
+ *        --markov=mode:0:20000000:30000000
+ *
+ *        For now, live with strtok(), may be later I need a replacement
+ *        for strsep().
+ */
 	if (mkv_param)
 	{
-		token = strtok(mkv_param, ":");
-		if(sscanf(token, "%d-%d", &mkv_minlevel, &mkv_level) != 2)
+		int i;
+		lvl_token = strtok(mkv_param, ":");
+		/*
+		 * If the first token contains anything else than digits
+		 * (for the Markov level) or '-' (for a level interval),
+		 * then treat it as a section name, and use the next token
+		 * as the Markov level (or level interval)
+		 */
+		for(i = 0; mode == NULL && lvl_token[i] != '\0'; i++)
 		{
-			mkv_minlevel = 0;
-			if (sscanf(token, "%d", &mkv_level) != 1)
+			if((lvl_token[i] < '0' || lvl_token[i] > '9') && lvl_token[i] != '-')
 			{
-				if (options.rootnode)
-				fprintf(stderr, "Could not parse markov parameters\n");
-				error();
+				mode = lvl_token;
+				lvl_token = strtok(NULL, ":");
 			}
-		}
-		token = strtok(NULL, ":");
-		if( (token != NULL) && (sscanf(token, LLd, &mkv_start)==1) )
-		{
-			token = strtok(NULL, ":");
-			if( (token != NULL) && (sscanf(token, LLd, &mkv_end)==1) )
-			{
-				token = strtok(NULL, ":");
-				if( (token != NULL) && (sscanf(token, "%d-%d", &mkv_minlen, &mkv_maxlen)!=2) )
-				{
-					mkv_minlen = 0;
-					sscanf(token, "%d", &mkv_maxlen);
-				}
-			}
-		}
-	}
-	if(mkv_level<mkv_minlevel)
-	{
-		if (options.rootnode)
-			fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", mkv_level, mkv_minlevel, mkv_level);
-		mkv_minlevel = mkv_level;
-	}
-	if(mkv_minlen > mkv_maxlen)
-	{
-		if (options.rootnode)
-			fprintf(stderr, "Warning: minimum length(%d) < maximum length(%d), minimum length set to %d\n", mkv_minlen, mkv_maxlen, mkv_maxlen);
-		mkv_minlen = mkv_maxlen;
-	}
 
+		}
+		start_token = strtok(NULL, ":");
+		end_token = strtok(NULL, ":");
+		len_token = strtok(NULL, ":");
 
-	if(mkv_level == 0)
-		if( (mkv_level = cfg_get_int(SECTION_MARKOV, SUBSECTION_DEFAULT, "MkvLvl")) == -1 )
+		dummy_token = strtok(NULL, ":");
+		if(dummy_token)
 		{
-			log_event("no markov level defined!");
 			if (options.rootnode)
-				fprintf(stderr, "no markov level defined!\n");
+			fprintf(stderr,
+			        "Too many markov parameters specified: %s\n",
+				dummy_token);
 			error();
 		}
+	}
 
-	if(mkv_maxlen == 0)
-		if( (mkv_maxlen = cfg_get_int(SECTION_MARKOV, SUBSECTION_DEFAULT, "MkvMaxLen")) == -1 )
-		{
-			log_event("no markov max length defined!");
-			if (options.rootnode)
-				fprintf(stderr, "no markov max length defined!\n");
-			error();
-		}
+	if(mode == NULL)
+		mode = SUBSECTION_DEFAULT;
 
-	statfile = cfg_get_param(SECTION_MARKOV, SUBSECTION_DEFAULT, "Statsfile");
-	if(statfile == NULL)
+	if(cfg_get_section(SECTION_MARKOV, mode) == NULL)
 	{
-		log_event("statfile not defined");
 		if (options.rootnode)
-			fprintf(stderr, "Statfile not defined\n");
+		fprintf(stderr,
+		        "Section [" SECTION_MARKOV "%s] not found\n",
+		        mode);
 		error();
 	}
 
-	if (mkv_maxlen > db->format->params.plaintext_length) {
-		log_event("! MaxLen = %d is too large for this hash type",
-			mkv_maxlen);
+	*statfile = cfg_get_param(SECTION_MARKOV, mode, "Statsfile");
+	if(*statfile == NULL)
+	{
+		log_event("Statsfile not defined");
 		if (options.rootnode)
-		    fprintf(stderr, "Warning: "
+		fprintf(stderr,
+		        "Statsfile not defined in section ["
+		        SECTION_MARKOV "%s]\n", mode);
+		error();
+	}
+
+	if(lvl_token != NULL)
+	{
+		if(sscanf(lvl_token, "%d-%d", &minlevel, &level) != 2)
+		{
+			if (sscanf(lvl_token, "%d", &level) != 1)
+			{
+				if (options.rootnode)
+				fprintf(stderr, "Could not parse markov level\n");
+				error();
+			}
+			if(level == 0)
+				/* get min. and max. level from markov section */
+				minlevel = -1;
+			else
+				minlevel = 0;
+
+		}
+		if((start_token != NULL) && (sscanf(start_token, LLd, start)==1) )
+		{
+			if((end_token != NULL) && (sscanf(end_token, LLd, end)==1) )
+			{
+				if( (len_token != NULL) && (sscanf(len_token, "%d-%d", &minlen, &maxlen)!=2) )
+				{
+					sscanf(len_token, "%d", &maxlen);
+					if(maxlen == 0)
+						/* get min. and max. length from markov section */
+						minlen = -1;
+					else
+						minlen = 0;
+				}
+			}
+			else if(end_token != NULL)
+			{
+				if (options.rootnode)
+				fprintf(stderr,
+				        "invalid end: %s\n", end_token);
+				error();
+			}
+		}
+		/*
+		 * Currently I see no use case for MkvStart and MkvEnd as variables
+		 * in a [Markov:mode] section.
+		 * If that changes, I'll need
+		 * start_token = cfg_get_param(SECTION_MARKOV, mode, "MkvStart")
+		 * and
+		 * sscanf(start_token, LLd, start)
+		 * because the values could be too large for integers
+		 */
+		else if(start_token != NULL)
+		{
+			if (options.rootnode)
+			fprintf(stderr,
+			        "invalid start: %s\n", start_token);
+			error();
+
+		}
+
+	}
+
+	if(level <= 0)
+		if( (level = cfg_get_int(SECTION_MARKOV, mode, "MkvLvl")) == -1 )
+		{
+			log_event("no markov level defined!");
+			if (options.rootnode)
+			fprintf(stderr,
+			        "no markov level defined in section [" SECTION_MARKOV "%s]\n",
+				mode);
+			error();
+		}
+
+	if (level > MAX_MKV_LVL) {
+		log_event("! Level = %d is too large (max=%d)", level, MAX_MKV_LVL);
+		if (options.rootnode)
+		fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", level, MAX_MKV_LVL);
+		level = MAX_MKV_LVL;
+	}
+
+	if(minlevel < 0)
+		if( (minlevel = cfg_get_int(SECTION_MARKOV, mode, "MkvMinLvl")) == -1 )
+			minlevel = 0;
+
+	if(level<minlevel)
+	{
+		if (options.rootnode)
+		fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", level, minlevel, level);
+		minlevel = level;
+	}
+
+	if(maxlen <= 0)
+		if( (maxlen = cfg_get_int(SECTION_MARKOV, mode, "MkvMaxLen")) == -1 )
+		{
+			log_event("no markov max length defined!");
+			if (options.rootnode)
+			fprintf(stderr,
+			        "no markov max length defined in section [" SECTION_MARKOV "%s]\n",
+			        mode);
+			error();
+		}
+
+	if (db->format->params.plaintext_length <= MAX_MKV_LEN &&
+	    maxlen > db->format->params.plaintext_length)
+	{
+		log_event("! MaxLen = %d is too large for this hash type",
+			maxlen);
+		if (options.rootnode)
+		fprintf(stderr, "Warning: "
 			"MaxLen = %d is too large for the current hash type, "
 			"reduced to %d\n",
-			mkv_maxlen, db->format->params.plaintext_length);
-		mkv_maxlen = db->format->params.plaintext_length;
+			maxlen, db->format->params.plaintext_length);
+		maxlen = db->format->params.plaintext_length;
+	}
+	else
+	if (maxlen > MAX_MKV_LEN)
+	{
+		log_event("! MaxLen = %d is too large (max=%d)", maxlen, MAX_MKV_LEN);
+		if (options.rootnode)
+		fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", maxlen, MAX_MKV_LEN);
+		maxlen = MAX_MKV_LEN;
 	}
 
-	if (mkv_maxlen > MAX_MKV_LEN) {
-		log_event("! MaxLen = %d is too large (max=%d)", mkv_maxlen, MAX_MKV_LEN);
+	if(minlen < 0)
+		if( (minlen = cfg_get_int(SECTION_MARKOV, mode, "MkvMinLen")) == -1 )
+			minlen = 0;
+
+	if(minlen > maxlen)
+	{
 		if (options.rootnode)
-			fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", mkv_maxlen, MAX_MKV_LEN);
-		mkv_maxlen = MAX_MKV_LEN;
+		fprintf(stderr, "Warning: minimum length(%d) < maximum length(%d), minimum length set to %d\n", minlen, maxlen, maxlen);
+		minlen = maxlen;
 	}
 
-	if (mkv_level > MAX_MKV_LVL) {
-		log_event("! Level = %d is too large (max=%d)", mkv_level, MAX_MKV_LVL);
-		if (options.rootnode)
-			fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", mkv_level, MAX_MKV_LVL);
-		mkv_level = MAX_MKV_LVL;
+	*mkv_minlen = minlen;
+	*mkv_maxlen = maxlen;
+	*mkv_minlevel = minlevel;
+	*mkv_level = level;
+}
+void do_markov_crack(struct db_main *db, char *mkv_param)
+{
+	char *statfile = NULL;
+	char *param = NULL;
+	unsigned int mkv_minlevel, mkv_level,  mkv_maxlen, mkv_minlen;
+	unsigned long long mkv_start, mkv_end;
+
+	if(mkv_param != NULL)
+	{
+		param = str_alloc_copy(mkv_param);
+		if(param == NULL)
+			param = mkv_param;
 	}
+
+	get_markov_options(db,
+	                   mkv_param,
+	                   &mkv_minlevel, &mkv_level, &mkv_start, &mkv_end,
+	                   &mkv_minlen, &mkv_maxlen, &statfile);
 
 	gidx = 0;
 	status_init(get_progress, 0);
@@ -386,39 +529,35 @@ void do_markov_crack(struct db_main *db, char * mkv_param)
 	}
 
 	if (options.rootnode) {
-		status += sprintf(status, "MKV start (lvl=");
-		if(mkv_minlevel > 0)
-			status += sprintf(status, "%d-", mkv_minlevel);
-		status += sprintf(status, "%d len=", mkv_level);
-		if(mkv_minlen > 0)
-			status += sprintf(status, "%d-", mkv_minlen);
-		status += sprintf(status, "%d start %lld end %lld pwd="LLd")",
-		                  mkv_maxlen, mkv_start, mkv_end, mkv_end-mkv_start);
-		fprintf(stderr, "%s\n", statusbuf);
-		// Output total numbers to stderr of root node
-		status = statusbuf;
+		fprintf(stderr, "MKV start (stats=%s, lvl=", statfile);
+		if(mkv_minlevel>0) fprintf(stderr, "%d-", mkv_minlevel);
+		fprintf(stderr, "%d len=", mkv_level);
+		if(mkv_minlen>0) fprintf(stderr, "%d-", mkv_minlen);
+		fprintf(stderr, "%d pwd="LLd"%s)\n", mkv_maxlen, mkv_end-mkv_start,
+		options.node_count > 1 ? " split over MPI nodes" : "");
 	}
 
 	if (options.node_count > 1) {
+		unsigned long long mkv_size;
+
 		mkv_size = mkv_end - mkv_start + 1;
 		if (options.node_max != options.node_count)
 			mkv_end = mkv_start + mkv_size / options.node_count * options.node_max - 1;
 		mkv_start += mkv_size / options.node_count * (options.node_min - 1);
 	}
 
-	// Output per-node numbers to log
-	status += sprintf(status, "MKV start (lvl=");
-	if(mkv_minlevel > 0)
-		status += sprintf(status, "%d-", mkv_minlevel);
-	status += sprintf(status, "%d len=", mkv_level);
-	if(mkv_minlen > 0)
-		status += sprintf(status, "%d-", mkv_minlen);
-	status += sprintf(status, "%d start %lld end %lld pwd="LLd")",
-	                  mkv_maxlen, mkv_start, mkv_end, mkv_end-mkv_start);
-	log_event("%s", statusbuf);
-
 	gstart = mkv_start;
 	gend = mkv_end + 10; /* omg !! */
+
+	if(param)
+		log_event("Proceeding with Markov mode %s", param);
+	else
+		log_event("Proceeding with Markov mode");
+
+	log_event("- Statsfile: %s", statfile);
+	log_event("- Markov level: %d - %d", mkv_minlevel, mkv_level);
+	log_event("- Length: %d - %d", mkv_minlen, mkv_maxlen);
+	log_event("- Start-End: "LLd" - "LLd, mkv_start, mkv_end);
 
 	show_pwd(mkv_start);
 

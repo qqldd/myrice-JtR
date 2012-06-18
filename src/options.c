@@ -125,6 +125,7 @@ static struct opt_entry opt_list[] = {
 	{"config", FLG_CONFIG_CLI, FLG_NONE, 0, OPT_REQ_PARAM,
 		OPT_FMT_STR_ALLOC, &options.config},
 	{"nolog", FLG_NOLOG, FLG_NOLOG},
+	{"log-stderr", FLG_LOG_STDERR | FLG_NOLOG, FLG_LOG_STDERR},
 	{"node", FLG_NONE, FLG_NONE, 0, OPT_REQ_PARAM,
 		OPT_FMT_STR_ALLOC, &options.node_str},
 	{"fork", FLG_NONE, FLG_NONE, 0, OPT_REQ_PARAM, "%u", &options.fork},
@@ -172,7 +173,7 @@ static struct opt_entry opt_list[] = {
 "                          full list, use --list=encodings\n" \
 "--rules[=SECTION]         enable word mangling rules for wordlist mode\n" \
 "--incremental[=MODE]      \"incremental\" mode [using section MODE]\n" \
-"--markov[=LEVEL[:opts]]   \"Markov\" mode (see documentation)\n" \
+"--markov[=options]        \"Markov\" mode (see doc/MARKOV)\n" \
 "--external=MODE           external mode or word filter\n" \
 "--stdout[=LENGTH]         just output candidate passwords [cut at LENGTH]\n" \
 "--restore[=NAME]          restore an interrupted session [called NAME]\n" \
@@ -198,6 +199,7 @@ static struct opt_entry opt_list[] = {
 "--field-separator-char=C  use 'C' instead of the ':' in input and pot files\n" \
 "--fix-state-delay=N       performance tweak, see documentation\n" \
 "--nolog                   disables creation and writing to john.log file\n" \
+"--log-stderr              log to screen instead of file\n" \
 "--node=MIN[-MAX]/COUNT    this node's number range out of total count\n" \
 "--fork=COUNT              fork this many processes\n" \
 "--crack-status            emit a status line whenever a password is cracked\n" \
@@ -299,8 +301,7 @@ void opt_init(char *name, int argc, char **argv)
 	options.loader.field_sep_char = options.field_sep_char = ':';
 	options.loader.regen_lost_salts = options.regen_lost_salts = 0;
 	options.loader.max_fix_state_delay = 0;
-	options.loader.max_wordfile_memory =
-		WORDLIST_BUFFER_DEFAULT >> mem_saving_level;
+	options.loader.max_wordfile_memory = WORDLIST_BUFFER_DEFAULT;
 	options.mkpc = 0;
 	options.max_run_time = 0;
 
@@ -333,6 +334,9 @@ void opt_init(char *name, int argc, char **argv)
 		options.flags |= FLG_BATCH_SET;
 
 	opt_check(opt_list, options.flags, argv);
+
+	if (options.loader.max_wordfile_memory == WORDLIST_BUFFER_DEFAULT)
+		options.loader.max_wordfile_memory >>= mem_saving_level;
 
 	if (options.session) {
 		rec_name = options.session;
