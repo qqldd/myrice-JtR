@@ -462,7 +462,7 @@ void get_markov_options(struct db_main *db,
 	if(minlen > maxlen)
 	{
 		if (options.rootnode)
-		fprintf(stderr, "Warning: minimum length(%d) < maximum length(%d), minimum length set to %d\n", minlen, maxlen, maxlen);
+		fprintf(stderr, "Warning: minimum length(%d) > maximum length(%d), minimum length set to %d\n", minlen, maxlen, maxlen);
 		minlen = maxlen;
 	}
 
