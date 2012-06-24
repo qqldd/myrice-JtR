@@ -150,11 +150,14 @@ char *benchmark_format(struct fmt_main *format, int salts,
 		two_salts[index] = mem_alloc(format->params.salt_size);
 
 		if ((ciphertext = format->params.tests[index].ciphertext)) {
+			struct fmt_tests *current =
+			    &format->params.tests[index];
 			char *prepared;
 			current->flds[1] = current->ciphertext;
 			prepared = format->methods.prepare(current->flds, format);
 			ciphertext = format->methods.split(prepared, 0);
 			salt = format->methods.salt(ciphertext);
+			++current;
 		}
 		else
 			salt = two_salts[0];
@@ -426,16 +429,19 @@ int benchmark_all(void)
 #endif /* _OPENMP */
 #endif /* HAVE_MPI */
 		switch (format->params.benchmark_length) {
+		case 0:
+		case -1000:
+			if (format->params.tests[1].ciphertext) {
+				msg_m = "Many salts";
+				msg_1 = "Only one salt";
+				break;
+			}
+			/* fall through */
+
 		case -1:
 		case -1001:
 			msg_m = "Raw";
 			msg_1 = NULL;
-			break;
-
-		case 0:
-		case -1000:
-			msg_m = "Many salts";
-			msg_1 = "Only one salt";
 			break;
 
 		default:
@@ -474,7 +480,7 @@ int benchmark_all(void)
 #endif
 		benchmark_cps(&results_m.count, results_m.real, s_real);
 		benchmark_cps(&results_m.count, results_m.virtual, s_virtual);
-#if !defined(__DJGPP__) && !defined(__BEOS__)
+#if !defined(__DJGPP__) && !defined(__BEOS__) && !defined(__MINGW32__) && !defined (_MSC_VER)
 		printf("%s:\t%s c/s real, %s c/s virtual\n",
 			msg_m, s_real, s_virtual);
 #else
@@ -489,7 +495,7 @@ int benchmark_all(void)
 
 		benchmark_cps(&results_1.count, results_1.real, s_real);
 		benchmark_cps(&results_1.count, results_1.virtual, s_virtual);
-#if !defined(__DJGPP__) && !defined(__BEOS__)
+#if !defined(__DJGPP__) && !defined(__BEOS__) && !defined(__MINGW32__) && !defined (_MSC_VER)
 		printf("%s:\t%s c/s real, %s c/s virtual\n\n",
 			msg_1, s_real, s_virtual);
 #else
