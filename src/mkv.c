@@ -241,21 +241,19 @@ static int get_progress(int *hundth_perc)
 void get_markov_options(struct db_main *db,
                         char *mkv_param,
                         unsigned int *mkv_minlevel, unsigned int *mkv_level,
-                        unsigned long long *start, unsigned long long *end,
+                        char **start_token, char **end_token,
                         unsigned int *mkv_minlen, unsigned int *mkv_maxlen,
                         char **statfile)
 {
 	char * mode = NULL;
 	char *lvl_token = NULL;
-	char *start_token = NULL;
-	char *end_token = NULL;
 	char *len_token = NULL;
 	char *dummy_token = NULL;
 
 	int minlevel, level, minlen, maxlen;
 
-	*start = 0;
-	*end = 0;
+	*start_token = NULL;
+	*end_token = NULL;
 
 	minlevel = -1;
 	level = -1;
@@ -297,17 +295,17 @@ void get_markov_options(struct db_main *db,
 			}
 
 		}
-		start_token = strtok(NULL, ":");
-		end_token = strtok(NULL, ":");
+		*start_token = strtok(NULL, ":");
+		*end_token = strtok(NULL, ":");
 		len_token = strtok(NULL, ":");
 
 		dummy_token = strtok(NULL, ":");
 		if(dummy_token)
 		{
 			if (options.rootnode)
-			fprintf(stderr,
-			        "Too many markov parameters specified: %s\n",
-				dummy_token);
+				fprintf(stderr,
+				        "Too many markov parameters specified: %s\n",
+				        dummy_token);
 			error();
 		}
 	}
@@ -318,9 +316,9 @@ void get_markov_options(struct db_main *db,
 	if(cfg_get_section(SECTION_MARKOV, mode) == NULL)
 	{
 		if (options.rootnode)
-		fprintf(stderr,
-		        "Section [" SECTION_MARKOV "%s] not found\n",
-		        mode);
+			fprintf(stderr,
+			        "Section [" SECTION_MARKOV "%s] not found\n",
+			        mode);
 		error();
 	}
 
@@ -329,9 +327,9 @@ void get_markov_options(struct db_main *db,
 	{
 		log_event("Statsfile not defined");
 		if (options.rootnode)
-		fprintf(stderr,
-		        "Statsfile not defined in section ["
-		        SECTION_MARKOV "%s]\n", mode);
+			fprintf(stderr,
+			        "Statsfile not defined in section ["
+			        SECTION_MARKOV "%s]\n", mode);
 		error();
 	}
 
@@ -342,7 +340,7 @@ void get_markov_options(struct db_main *db,
 			if (sscanf(lvl_token, "%d", &level) != 1)
 			{
 				if (options.rootnode)
-				fprintf(stderr, "Could not parse markov level\n");
+					fprintf(stderr, "Could not parse markov level\n");
 				error();
 			}
 			if(level == 0)
@@ -352,46 +350,15 @@ void get_markov_options(struct db_main *db,
 				minlevel = 0;
 
 		}
-		if((start_token != NULL) && (sscanf(start_token, LLd, start)==1) )
-		{
-			if((end_token != NULL) && (sscanf(end_token, LLd, end)==1) )
-			{
-				if( (len_token != NULL) && (sscanf(len_token, "%d-%d", &minlen, &maxlen)!=2) )
-				{
-					sscanf(len_token, "%d", &maxlen);
-					if(maxlen == 0)
-						/* get min. and max. length from markov section */
-						minlen = -1;
-					else
-						minlen = 0;
-				}
-			}
-			else if(end_token != NULL)
-			{
-				if (options.rootnode)
-				fprintf(stderr,
-				        "invalid end: %s\n", end_token);
-				error();
-			}
-		}
-		/*
-		 * Currently I see no use case for MkvStart and MkvEnd as variables
-		 * in a [Markov:mode] section.
-		 * If that changes, I'll need
-		 * start_token = cfg_get_param(SECTION_MARKOV, mode, "MkvStart")
-		 * and
-		 * sscanf(start_token, LLd, start)
-		 * because the values could be too large for integers
-		 */
-		else if(start_token != NULL)
-		{
-			if (options.rootnode)
-			fprintf(stderr,
-			        "invalid start: %s\n", start_token);
-			error();
-
-		}
-
+	}
+	if( (len_token != NULL) && (sscanf(len_token, "%d-%d", &minlen, &maxlen)!=2) )
+	{
+		sscanf(len_token, "%d", &maxlen);
+		if(maxlen == 0)
+			/* get min. and max. length from markov section */
+			minlen = -1;
+		else
+			minlen = 0;
 	}
 
 	if(level <= 0)
@@ -399,16 +366,16 @@ void get_markov_options(struct db_main *db,
 		{
 			log_event("no markov level defined!");
 			if (options.rootnode)
-			fprintf(stderr,
-			        "no markov level defined in section [" SECTION_MARKOV "%s]\n",
-				mode);
+				fprintf(stderr,
+				        "no markov level defined in section [" SECTION_MARKOV "%s]\n",
+				        mode);
 			error();
 		}
 
 	if (level > MAX_MKV_LVL) {
 		log_event("! Level = %d is too large (max=%d)", level, MAX_MKV_LVL);
 		if (options.rootnode)
-		fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", level, MAX_MKV_LVL);
+			fprintf(stderr, "Warning: Level = %d is too large (max = %d)\n", level, MAX_MKV_LVL);
 		level = MAX_MKV_LVL;
 	}
 
@@ -419,7 +386,7 @@ void get_markov_options(struct db_main *db,
 	if(level<minlevel)
 	{
 		if (options.rootnode)
-		fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", level, minlevel, level);
+			fprintf(stderr, "Warning: max level(%d) < min level(%d), min level set to %d\n", level, minlevel, level);
 		minlevel = level;
 	}
 
@@ -428,9 +395,9 @@ void get_markov_options(struct db_main *db,
 		{
 			log_event("no markov max length defined!");
 			if (options.rootnode)
-			fprintf(stderr,
-			        "no markov max length defined in section [" SECTION_MARKOV "%s]\n",
-			        mode);
+				fprintf(stderr,
+				        "no markov max length defined in section [" SECTION_MARKOV "%s]\n",
+				        mode);
 			error();
 		}
 
@@ -440,10 +407,10 @@ void get_markov_options(struct db_main *db,
 		log_event("! MaxLen = %d is too large for this hash type",
 			maxlen);
 		if (options.rootnode)
-		fprintf(stderr, "Warning: "
-			"MaxLen = %d is too large for the current hash type, "
-			"reduced to %d\n",
-			maxlen, db->format->params.plaintext_length);
+			fprintf(stderr, "Warning: "
+			        "MaxLen = %d is too large for the current hash type, "
+			        "reduced to %d\n",
+			        maxlen, db->format->params.plaintext_length);
 		maxlen = db->format->params.plaintext_length;
 	}
 	else
@@ -451,7 +418,7 @@ void get_markov_options(struct db_main *db,
 	{
 		log_event("! MaxLen = %d is too large (max=%d)", maxlen, MAX_MKV_LEN);
 		if (options.rootnode)
-		fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", maxlen, MAX_MKV_LEN);
+			fprintf(stderr, "Warning: Maxlen = %d is too large (max = %d)\n", maxlen, MAX_MKV_LEN);
 		maxlen = MAX_MKV_LEN;
 	}
 
@@ -462,7 +429,7 @@ void get_markov_options(struct db_main *db,
 	if(minlen > maxlen)
 	{
 		if (options.rootnode)
-		fprintf(stderr, "Warning: minimum length(%d) > maximum length(%d), minimum length set to %d\n", minlen, maxlen, maxlen);
+			fprintf(stderr, "Warning: minimum length(%d) > maximum length(%d), minimum length set to %d\n", minlen, maxlen, maxlen);
 		minlen = maxlen;
 	}
 
@@ -474,6 +441,8 @@ void get_markov_options(struct db_main *db,
 void do_markov_crack(struct db_main *db, char *mkv_param)
 {
 	char *statfile = NULL;
+	char *start_token = NULL;
+	char *end_token = NULL;
 	char *param = NULL;
 	unsigned int mkv_minlevel, mkv_level,  mkv_maxlen, mkv_minlen;
 	unsigned long long mkv_start, mkv_end;
@@ -487,8 +456,38 @@ void do_markov_crack(struct db_main *db, char *mkv_param)
 
 	get_markov_options(db,
 	                   mkv_param,
-	                   &mkv_minlevel, &mkv_level, &mkv_start, &mkv_end,
+	                   &mkv_minlevel, &mkv_level, &start_token, &end_token,
 	                   &mkv_minlen, &mkv_maxlen, &statfile);
+
+	if((start_token != NULL) && (sscanf(start_token, LLd, &mkv_start)==1) )
+	{
+		if((end_token != NULL) && (sscanf(end_token, LLd, &mkv_end)==1) )
+		{
+		}
+		else if(end_token != NULL)
+		{
+			if (options.rootnode)
+				fprintf(stderr,
+				        "invalid end: %s\n", end_token);
+			error();
+		}
+	}
+	/*
+	 * Currently I see no use case for MkvStart and MkvEnd as variables
+	 * in a [Markov:mode] section.
+	 * If that changes, I'll need
+	 * start_token = cfg_get_param(SECTION_MARKOV, mode, "MkvStart")
+	 * and
+	 * sscanf(start_token, LLd, start)
+	 * because the values could be too large for integers
+	 */
+	else if(start_token != NULL)
+	{
+		if (options.rootnode)
+			fprintf(stderr,
+			        "invalid start: %s\n", start_token);
+		error();
+	}
 
 	gidx = 0;
 	status_init(get_progress, 0);
@@ -504,10 +503,39 @@ void do_markov_crack(struct db_main *db, char *mkv_param)
 	gmin_level = mkv_minlevel;
 	gmin_len = mkv_minlen;
 
+
 	nbparts = mem_alloc(256*(mkv_level+1)*sizeof(long long)*(mkv_maxlen+1));
 	memset(nbparts, 0, 256*(mkv_level+1)*(mkv_maxlen+1)*sizeof(long long));
 
 	nb_parts(0, 0, 0, mkv_level, mkv_maxlen);
+
+	if (start_token[strlen(start_token)-1] == '%') {
+		if (mkv_start >= 100) {
+			log_event("! Start = %s is too large (max < 100%%)", end_token);
+			if (options.rootnode)
+				fprintf(stderr, "Error: Start = %s is too large (max < 100%%)\n", start_token);
+			exit(1);
+		} else if (mkv_start > 0) {
+			mkv_start = nbparts[0] / 100 * mkv_start;
+			log_event("- Start: %s converted to "LLd, start_token, mkv_start);
+			if (options.rootnode)
+				fprintf(stderr, "Start: %s converted to "LLd"\n", start_token, mkv_start);
+		}
+	}
+	if (end_token[strlen(end_token)-1] == '%') {
+		if (mkv_end >= 100) {
+			if (mkv_end > 100) {
+				if (options.rootnode)
+					fprintf(stderr, "Warning: End = %s is too large (max = 100%%)\n", end_token);
+			}
+			mkv_end = 0;
+		} else if (mkv_end > 0) {
+			mkv_end = nbparts[0] / 100 * mkv_end;
+			log_event("- End: %s converted to "LLd"", end_token, mkv_end);
+			if (options.rootnode)
+				fprintf(stderr, "End: %s converted to "LLd"\n", end_token, mkv_end);
+		}
+	}
 
 	if(mkv_end==0)
 		mkv_end = nbparts[0];
@@ -534,7 +562,7 @@ void do_markov_crack(struct db_main *db, char *mkv_param)
 		fprintf(stderr, "%d len=", mkv_level);
 		if(mkv_minlen>0) fprintf(stderr, "%d-", mkv_minlen);
 		fprintf(stderr, "%d pwd="LLd"%s)\n", mkv_maxlen, mkv_end-mkv_start,
-		options.node_count > 1 ? " split over MPI nodes" : "");
+		        options.node_count > 1 ? " split over MPI nodes" : "");
 	}
 
 	if (options.node_count > 1) {
