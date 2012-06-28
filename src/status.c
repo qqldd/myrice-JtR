@@ -431,6 +431,8 @@ static void status_print_cracking(char *percent)
 	unsigned int time = status_get_time();
 	char *key, saved_key[PLAINTEXT_BUFFER_SIZE] = "";
 	char s_cps[64], cand[32] = "";
+	char nodeid[11] = "";
+	char trying[256];
 
 	emms();
 
@@ -443,7 +445,6 @@ static void status_print_cracking(char *percent)
 
 	// we need to print until cr in one call, otherwise output gets
 	// interleaved when multiple nodes print at once
-	char nodeid[11] = "";
 	if (options.node_count > 1) {
 		if (options.node_max > options.node_min)
 			snprintf(nodeid, sizeof(nodeid), "%2d-%2d: ", options.node_min, options.node_max);
@@ -451,7 +452,6 @@ static void status_print_cracking(char *percent)
 			snprintf(nodeid, sizeof(nodeid), "%3d: ", options.node_min);
 	}
 	nodeid[sizeof(nodeid)-1] = 0;
-	char trying[256];
 	if ((options.flags & FLG_STATUS_CHK) ||
 	    !(status.crypts.lo | status.crypts.hi))
 		trying[0] = 0;

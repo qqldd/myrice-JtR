@@ -411,10 +411,10 @@ last:
 parent:
 		{
 			static char *orig = NULL;
-			if (!orig)
-				orig = rec_name;
 			char *s = mem_alloc_tiny(strlen(orig) + 20,
 			    MEM_ALIGN_NONE);
+			if (!orig)
+				orig = rec_name;
 			sprintf(s, "%s.%u", orig, options.node_min - 1);
 			rec_name = s;
 			if ((options.flags & FLG_RESTORE_CHK) ||
