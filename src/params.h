@@ -19,7 +19,7 @@
 /*
  * John's version number.
  */
-#define JOHN_VERSION			"1.7.9.4-contest-jumbo-6+"
+#define JOHN_VERSION			"1.7.9.4-jumbo-6+bleeding+contest"
 
 /*
  * Notes to packagers of John for *BSD "ports", Linux distributions, etc.:
@@ -286,7 +286,7 @@ extern int password_hash_thresholds[PASSWORD_HASH_SIZES];
 #define CHARSET_MIN			' '
 #define CHARSET_MAX			0x7E
 #define CHARSET_SIZE			(CHARSET_MAX - CHARSET_MIN + 1)
-#define CHARSET_LENGTH			15
+#define CHARSET_LENGTH			8
 
 /*
  * Compiler parameters.
