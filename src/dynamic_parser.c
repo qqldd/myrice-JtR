@@ -573,7 +573,7 @@ char *dynamic_LOAD_PARSER_SIGNATURE(int which)
 		return NULL;
 
 	// Setup the 'default' format name
-	sprintf(Sig, "dynamic_%d ", which);
+	sprintf(Sig, "dynamic_%d: ", which);
 
 	gen_line = gen_source->head;
 	while (gen_line)
@@ -642,13 +642,13 @@ int dynamic_LOAD_PARSER_FUNCTIONS(int which, struct fmt_main *pFmt)
 	{
 		if (options.rootnode)
 			fprintf(stderr, "Could not find section [List.Generic:dynamic_%d] in the john.ini/conf file\n", which);
-		error();
+		//error();
 	}
 
 	// Setup the 'default' format name
 	sprintf(SetupName, "$dynamic_%d$", which);
 	sprintf(SetupNameID, "dynamic_%d", which);
-	pSetup->szFORMAT_NAME = str_alloc_copy(SetupName);
+	pSetup->szFORMAT_NAME = str_alloc_copy(SetupNameID);
 
 	// allocate (and set null) enough file pointers
 	cnt = Count_Items("Func=");
@@ -683,7 +683,7 @@ int dynamic_LOAD_PARSER_FUNCTIONS(int which, struct fmt_main *pFmt)
 		{
 			if (options.rootnode)
 				fprintf(stderr, "Error parsing section [List.Generic:dynamic_%d]\nError in line %d file is %s\n", which, gen_line->number, gen_line->cfg_name);
-			error();
+			//error();
 		}
 		gen_line = gen_line->next;
 	}
