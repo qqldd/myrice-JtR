@@ -286,7 +286,7 @@ extern int password_hash_thresholds[PASSWORD_HASH_SIZES];
 #define CHARSET_MIN			' '
 #define CHARSET_MAX			0x7E
 #define CHARSET_SIZE			(CHARSET_MAX - CHARSET_MIN + 1)
-#define CHARSET_LENGTH			8
+#define CHARSET_LENGTH			15
 
 /*
  * Compiler parameters.
