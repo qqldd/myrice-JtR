@@ -209,14 +209,14 @@ static int ldr_check_shells(struct list_main *list, char *shell)
 static int ldr_split_line(char **login, char **ciphertext,
 	char **gecos, char **home,
 	char *source, struct fmt_main **format,
-	struct db_options *options, char *line)
+	struct db_options *db_options, char *line)
 {
 	struct fmt_main *alt;
 	char *fields[10], *uid, *gid, *shell;
 	int i, retval;
 
-	fields[0] = *login = ldr_get_field(&line, options->field_sep_char);
-	fields[1] = *ciphertext = ldr_get_field(&line, options->field_sep_char);
+	fields[0] = *login = ldr_get_field(&line, db_options->field_sep_char);
+	fields[1] = *ciphertext = ldr_get_field(&line, db_options->field_sep_char);
 
 /* Check for NIS stuff */
 	if ((!strcmp(*login, "+") || !strncmp(*login, "+@", 2)) &&
@@ -254,15 +254,15 @@ static int ldr_split_line(char **login, char **ciphertext,
 	if (source)
 		strcpy(source, line ? line : "");
 
-	if ((options->flags & DB_WORDS) || options->shells->head) {
+	if ((db_options->flags & DB_WORDS) || db_options->shells->head) {
 		for (i = 2; i < 10; i++)
-			fields[i] = ldr_get_field(&line, options->field_sep_char);
+			fields[i] = ldr_get_field(&line, db_options->field_sep_char);
 	} else {
 		for (i = 2; i < 4; i++)
-			fields[i] = ldr_get_field(&line, options->field_sep_char);
+			fields[i] = ldr_get_field(&line, db_options->field_sep_char);
 		// Next line needed for l0phtcrack (in Jumbo)
 		for (; i < 6; i++)
-			fields[i] = ldr_get_field(&line, options->field_sep_char);
+			fields[i] = ldr_get_field(&line, db_options->field_sep_char);
 		for (; i < 10; i++)
 			fields[i] = "/";
 	}
@@ -310,9 +310,9 @@ static int ldr_split_line(char **login, char **ciphertext,
 		*gecos = fields[2]; // in case there's a domain name here
 	}
 
-	if (ldr_check_list(options->users, *login, uid)) return 0;
-	if (ldr_check_list(options->groups, gid, gid)) return 0;
-	if (ldr_check_shells(options->shells, shell)) return 0;
+	if (ldr_check_list(db_options->users, *login, uid)) return 0;
+	if (ldr_check_list(db_options->groups, gid, gid)) return 0;
+	if (ldr_check_shells(db_options->shells, shell)) return 0;
 
 	if (*format) {
 		char *prepared;
