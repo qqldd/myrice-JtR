@@ -39,7 +39,7 @@
 #define CIPHERTEXT_LENGTH		(HASH_LENGTH + TAG_LENGTH)
 
 #define DIGEST_SIZE			20
-#define BINARY_SIZE			20 // get_source()
+#define BINARY_SIZE			20 // source()
 #define SALT_SIZE			0
 
 #ifdef MMX_COEF
@@ -81,7 +81,7 @@ static ARCH_WORD_32 crypt_key[DIGEST_SIZE / 4];
 static SHA_CTX ctx;
 #endif
 
-static int valid(char *ciphertext, struct fmt_main *pFmt)
+static int valid(char *ciphertext, struct fmt_main *self)
 {
 	int i;
 
@@ -100,7 +100,7 @@ static int valid(char *ciphertext, struct fmt_main *pFmt)
 	return 1;
 }
 
-static char *split(char *ciphertext, int index)
+static char *split(char *ciphertext, int index, struct fmt_main *self)
 {
 	static char out[CIPHERTEXT_LENGTH + 1];
 
@@ -304,14 +304,15 @@ static int get_hash_5(int index) { return ((ARCH_WORD_32*)crypt_key)[0] & 0xffff
 static int get_hash_6(int index) { return ((ARCH_WORD_32*)crypt_key)[0] & 0x7ffffff; }
 #endif
 
-static char *get_source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
+static char *source(char *source, void *binary)
 {
+	static char Buf[CIPHERTEXT_LENGTH + 1];
 	unsigned char realcipher[BINARY_SIZE];
 	unsigned char *cpi;
 	char *cpo;
 	int i;
 
-	memcpy(realcipher, pw->binary, BINARY_SIZE);
+	memcpy(realcipher, binary, BINARY_SIZE);
 #ifdef MMX_COEF
 	alter_endianity(realcipher, BINARY_SIZE);
 #endif
@@ -350,6 +351,7 @@ struct fmt_main fmt_rawSHA1 = {
 		split,
 		binary,
 		fmt_default_salt,
+		source,
 		{
 			binary_hash_0,
 			binary_hash_1,
@@ -376,7 +378,6 @@ struct fmt_main fmt_rawSHA1 = {
 		},
 		cmp_all,
 		cmp_one,
-		cmp_exact,
-		get_source
+		cmp_exact
 	}
 };
