@@ -144,7 +144,7 @@ static void *get_binary(char *ciphertext)
 
 static void *salt(char *ciphertext)
 {
-	static unsigned char out[SALT_SIZE];
+	static unsigned char out[SALT_SIZE] __attribute__ ((aligned(4)));
 	char *p;
 	int i;
 
