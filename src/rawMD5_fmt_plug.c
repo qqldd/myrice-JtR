@@ -295,8 +295,9 @@ static int cmp_exact(char *source, int index)
 #endif
 }
 
-static char *source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
+static char *source(char *source, void *binary)
 {
+	static char Buf[CIPHERTEXT_LENGTH + TAG_LENGTH + 1];
 	unsigned char *cpi;
 	char *cpo;
 	int i;
@@ -304,7 +305,7 @@ static char *source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
 	strcpy(Buf, FORMAT_TAG);
 	cpo = &Buf[TAG_LENGTH];
 
-	cpi = (unsigned char*)(pw->binary);
+	cpi = (unsigned char*)(binary);
 
 	for (i = 0; i < BINARY_SIZE; ++i) {
 		*cpo++ = itoa16[(*cpi)>>4];
@@ -324,7 +325,9 @@ struct fmt_main fmt_rawMD5 = {
 		BENCHMARK_LENGTH,
 		PLAINTEXT_LENGTH,
 		BINARY_SIZE,
+		DEFAULT_ALIGN,
 		SALT_SIZE,
+		DEFAULT_ALIGN,
 		MIN_KEYS_PER_CRYPT,
 		MAX_KEYS_PER_CRYPT,
 		FMT_CASE | FMT_8_BIT,
@@ -336,7 +339,7 @@ struct fmt_main fmt_rawMD5 = {
 		split,
 		binary,
 		fmt_default_salt,
-		fmt_default_source,
+		source,
 		{
 			binary_hash_0,
 			binary_hash_1,

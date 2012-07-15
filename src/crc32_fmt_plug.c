@@ -140,6 +140,7 @@ static void *salt(char *ciphertext)
 	return out;
 }
 
+#if 0 // Not possible with current interface
 static char *source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
 {
 	ARCH_WORD_32 s = *(ARCH_WORD_32*)(pw->source);
@@ -149,6 +150,7 @@ static char *source(struct db_password *pw, char Buf[LINE_BUFFER_SIZE] )
 	sprintf(Buf, "$crc32$%08x.%08x", s,b);
 	return Buf;
 }
+#endif
 
 static void set_salt(void *salt)
 {
@@ -215,7 +217,9 @@ struct fmt_main fmt_crc32 = {
 		BENCHMARK_LENGTH,
 		PLAINTEXT_LENGTH,
 		BINARY_SIZE,
+		DEFAULT_ALIGN,
 		SALT_SIZE,
+		DEFAULT_ALIGN,
 		MIN_KEYS_PER_CRYPT,
 		MAX_KEYS_PER_CRYPT,
 		FMT_CASE | FMT_8_BIT | FMT_NOT_EXACT | FMT_OMP,
