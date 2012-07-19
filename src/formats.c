@@ -61,6 +61,14 @@ void fmt_init(struct fmt_main *format)
 #endif
 }
 
+void fmt_done(struct fmt_main *format)
+{
+	if (format->private.initialized) {
+		format->methods.done();
+		format->private.initialized = 0;
+	}
+}
+
 static int is_poweroftwo(size_t align)
 {
 	return align != 0 && (align & (align - 1)) == 0;
@@ -100,6 +108,14 @@ static char *fmt_self_test_body(struct fmt_main *format,
 	if (format->methods.cmp_one == NULL)    return "method cmp_one NULL";
 	if (format->methods.cmp_exact == NULL)  return "method cmp_exact NULL";
 
+/*
+ * Test each format just once unless we're debugging.
+ */
+#ifndef DEBUG
+	if (format->private.initialized == 2)
+		return NULL;
+#endif
+
 	if (format->params.plaintext_length < 1 ||
 	    format->params.plaintext_length > PLAINTEXT_BUFFER_SIZE - 3)
 		return "plaintext_length";
@@ -114,6 +130,8 @@ static char *fmt_self_test_body(struct fmt_main *format,
 		return "valid";
 
 	fmt_init(format);
+
+	format->methods.reset(NULL);
 
 	if (!(current = format->params.tests)) return NULL;
 	ntests = 0;
@@ -172,7 +190,8 @@ static char *fmt_self_test_body(struct fmt_main *format,
 		format->methods.set_salt(salt);
 		format->methods.set_key(current->plaintext, index);
 
-		format->methods.crypt_all(index + 1);
+		if (format->methods.crypt_all(index + 1, NULL) != index + 1)
+			return "crypt_all";
 
 		for (size = 0; size < PASSWORD_HASH_SIZES; size++)
 		if (format->methods.binary_hash[size] &&
@@ -230,6 +249,8 @@ static char *fmt_self_test_body(struct fmt_main *format,
 		}
 	} while (done != 3);
 
+	format->private.initialized = 2;
+
 	return NULL;
 }
 
@@ -275,6 +296,14 @@ char *fmt_self_test(struct fmt_main *format)
 }
 
 void fmt_default_init(struct fmt_main *self)
+{
+}
+
+void fmt_default_done(void)
+{
+}
+
+void fmt_default_reset(struct db_main *db)
 {
 }
 

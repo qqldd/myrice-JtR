@@ -1,6 +1,6 @@
 /*
  * This file is part of John the Ripper password cracker,
- * Copyright (c) 1996-2001 by Solar Designer
+ * Copyright (c) 1996-2001,2012 by Solar Designer
  */
 
 #include <string.h>
@@ -281,7 +281,7 @@ static char *get_key(int index)
 	return buffer[index].key;
 }
 
-static void crypt_all(int count)
+static int crypt_all(int count, struct db_salt *salt)
 {
 	int index, pos, length;
 	char xor[8];
@@ -378,6 +378,8 @@ static void crypt_all(int count)
 		buffer[index].aligned.binary[0] = block[0] | 0x01010101;
 		buffer[index].aligned.binary[1] = block[1] | 0x01010101;
 	}
+
+	return count;
 }
 
 static int cmp_all(void *binary, int count)
@@ -449,6 +451,8 @@ struct fmt_main fmt_AFS = {
 		tests
 	}, {
 		init,
+		fmt_default_done,
+		fmt_default_reset,
 		fmt_default_prepare,
 		valid,
 		fmt_default_split,

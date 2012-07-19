@@ -479,10 +479,11 @@ static MAYBE_INLINE void crypt_traverse_by_salt(int count)
 #endif
 }
 
-static void crypt_all(int count)
+static int crypt_all(int count, struct db_salt *salt)
 {
 	crypt_link_by_salt(count);
 	crypt_traverse_by_salt(count);
+	return count;
 }
 
 #if DES_BS
@@ -590,6 +591,8 @@ struct fmt_main fmt_trip = {
 		tests
 	}, {
 		init,
+		fmt_default_done,
+		fmt_default_reset,
 		fmt_default_prepare,
 		valid,
 		fmt_default_split,

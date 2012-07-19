@@ -27,6 +27,13 @@ struct fmt_main;
 #endif
 
 /*
+ * Some format methods accept pointers to these, yet we can't just include
+ * loader.h here because that would be a circular dependency.
+ */
+struct db_main;
+struct db_salt;
+
+/*
  * Format property flags.
  */
 /* Uses case-sensitive passwords */
@@ -125,6 +132,17 @@ struct fmt_methods {
  * shared underlying resource is used). */
 	void (*init)(struct fmt_main *self);
 
+/* De-initializes this format, which must have been previously initialized */
+	void (*done)(void);
+
+/* Called whenever the set of password hashes being cracked changes, such as
+ * after self-test, but before actual cracking starts.  When called before a
+ * self-test or benchmark rather than before actual cracking, db may be NULL.
+ * Normally, this is a no-op since a format implementation shouldn't mess with
+ * the database unnecessarily.  However, when there is a good reason to do so
+ * this may e.g. transfer the salts and hashes onto a GPU card. */
+	void (*reset)(struct db_main *db);
+
 /* Extracts the ciphertext string out of the input file fields.  Normally, this
  * will simply return field[1], but in some special cases it may use another
  * field (e.g., when the hash type is commonly used with PWDUMP rather than
@@ -178,10 +196,18 @@ struct fmt_methods {
  * a call to clear_keys() the keys are undefined. */
 	void (*clear_keys)(void);
 
-/* Calculates the ciphertexts for given salt and plaintexts. This may
- * always calculate at least min_keys_per_crypt ciphertexts regardless of
- * the requested count, for some formats. */
-	void (*crypt_all)(int count);
+/* Computes the ciphertexts for given salt and plaintexts.
+ * For implementation reasons, this may happen to always compute at least
+ * min_keys_per_crypt ciphertexts even if the requested count is lower,
+ * although it is preferable for implementations to obey the count whenever
+ * practical and also for callers not to call crypt_all() with fewer than
+ * min_keys_per_crypt keys whenever practical.
+ * Returns the last output index for which there might be a match (against the
+ * supplied salt's hashes) plus 1.  A return value of zero indicates no match.
+ * If an implementation does not use the salt parameter or if salt is NULL
+ * (as it may be during self-test and benchmark), the return value must always
+ * be exactly count. */
+	int (*crypt_all)(int count, struct db_salt *salt);
 
 /* These functions calculate a hash out of a ciphertext that has just been
  * generated with the crypt_all() method. To be used while cracking. */
@@ -235,6 +261,11 @@ extern void fmt_register(struct fmt_main *format);
 extern void fmt_init(struct fmt_main *format);
 
 /*
+ * De-initializes this format if it was previously initialized.
+ */
+extern void fmt_done(struct fmt_main *format);
+
+/*
  * Tests the format's methods for correct operation. Returns NULL on
  * success, method name on error.
  */
@@ -244,6 +275,8 @@ extern char *fmt_self_test(struct fmt_main *format);
  * Default methods.
  */
 extern void fmt_default_init(struct fmt_main *self);
+extern void fmt_default_done(void);
+extern void fmt_default_reset(struct db_main *db);
 extern char *fmt_default_prepare(char *fields[10], struct fmt_main *self);
 extern int fmt_default_valid(char *ciphertext, struct fmt_main *self);
 extern char *fmt_default_split(char *ciphertext, int index,

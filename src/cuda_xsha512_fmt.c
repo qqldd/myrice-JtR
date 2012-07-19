@@ -281,10 +281,11 @@ static char *get_key(int index)
 	}
 }
 
-static void crypt_all(int count)
+static int crypt_all(int count, struct db_salt *salt)
 {
 	cuda_xsha512(gkey, &gsalt, ghash, g_ext_key, count);
 	xsha512_key_changed = 0;
+    return count;
 }
 
 static int cmp_all(void *binary, int count)
@@ -354,6 +355,8 @@ struct fmt_main fmt_cuda_xsha512 = {
 		tests
 	}, {
 		init,
+        fmt_default_done,
+        fmt_default_reset,
 		prepare,
 		valid,
 		fmt_default_split,

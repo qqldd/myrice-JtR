@@ -1,6 +1,6 @@
 /*
  * This file is part of John the Ripper password cracker,
- * Copyright (c) 1996-2004,2006,2009-2011 by Solar Designer
+ * Copyright (c) 1996-2004,2006,2009-2012 by Solar Designer
  *
  * ...with changes in the jumbo patch, by JimF and magnum (and various others?)
  */
@@ -1044,8 +1044,15 @@ static void john_run(void)
 		int remaining = database.password_count;
 
 		if (!(options.flags & FLG_STDOUT)) {
-			status_init(NULL, 1);
+			char *where = fmt_self_test(database.format);
+			if (where) {
+				fprintf(stderr, "Self test failed (%s)\n",
+				    where);
+				error();
+			}
+			database.format->methods.reset(&database);
 			log_init(LOG_NAME, options.loader.activepot, options.session);
+			status_init(NULL, 1);
 			john_log_format();
 			if (idle_requested(database.format))
 				log_event("- Configured to use otherwise idle "
@@ -1125,18 +1132,20 @@ static void john_run(void)
 
 static void john_done(void)
 {
-	path_done();
-
-	if ((options.flags & FLG_CRACKING_CHK) &&
-	    !(options.flags & FLG_STDOUT)) {
+	if ((options.flags & (FLG_CRACKING_CHK | FLG_STDOUT)) ==
+	    FLG_CRACKING_CHK) {
 		if (event_abort)
 			log_event(timer_abort ?
 			          "Session aborted" :
 			          "Session stopped (max run-time reached)");
 		else
 			log_event("Session completed");
+		fmt_done(database.format);
 	}
 	log_done();
+
+	path_done();
+
 	check_abort(0);
 	cleanup_tiny_memory();
 }
