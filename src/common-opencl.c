@@ -251,10 +251,10 @@ void opencl_find_best_workgroup_limit(struct fmt_main *self, size_t group_size_l
 
 	/// Warm-up run
 	local_work_size = wg_multiple;
-	self->methods.crypt_all(self->params.max_keys_per_crypt);
+	self->methods.crypt_all(self->params.max_keys_per_crypt, NULL);
 
 	// Timing run
-	self->methods.crypt_all(self->params.max_keys_per_crypt);
+	self->methods.crypt_all(self->params.max_keys_per_crypt, NULL);
 	HANDLE_CLERROR(clFinish(queue[gpu_id]), "clFinish error");
 	clGetEventProfilingInfo(profilingEvent,
 	    CL_PROFILING_COMMAND_SUBMIT, sizeof(cl_ulong), &startTime,
@@ -285,7 +285,7 @@ void opencl_find_best_workgroup_limit(struct fmt_main *self, size_t group_size_l
                         advance_cursor();
 			local_work_size = my_work_group;
 
-			self->methods.crypt_all(self->params.max_keys_per_crypt);
+			self->methods.crypt_all(self->params.max_keys_per_crypt, NULL);
 
 			HANDLE_CLERROR(clFinish(queue[gpu_id]), "clFinish error");
 			clGetEventProfilingInfo(profilingEvent,

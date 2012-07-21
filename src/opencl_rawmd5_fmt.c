@@ -265,7 +265,7 @@ static char *get_key(int index) {
 	return get_key_saved;
 }
 
-static void crypt_all(int count)
+static int crypt_all(int count, struct db_salt *salt)
 {
 #ifdef DEBUGVERBOSE
 	int i, j;
@@ -306,6 +306,7 @@ static void crypt_all(int count)
 	}
 	fprintf(stderr, "\n");;
 #endif
+    return count;
 }
 
 static int cmp_one(void *binary, int index){
@@ -363,6 +364,8 @@ struct fmt_main fmt_opencl_rawMD5 = {
 		tests
 	}, {
 		fmt_MD5_init,
+        fmt_default_done,
+        fmt_default_reset,
 		fmt_default_prepare,
 		valid,
 		split,
