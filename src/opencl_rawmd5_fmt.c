@@ -1,7 +1,7 @@
 /*
  * This file is part of John the Ripper password cracker,
  * Copyright (c) 2010 by Solar Designer
- *
+ * Copyright (c) 2012 by Myrice - Adding GPU password generation support
  * MD5 OpenCL code is based on Alain Espinosa's OpenCL patches.
  *
  */
@@ -13,6 +13,7 @@
 #include "path.h"
 #include "common.h"
 #include "formats.h"
+#include "loader.h"
 #include "common-opencl.h"
 
 #define MD5_NUM_KEYS        1024*2048
@@ -28,6 +29,12 @@
 
 cl_command_queue queue_prof;
 cl_mem pinned_saved_keys, pinned_partial_hashes, buffer_out, buffer_keys, data_info;
+
+cl_mem pinned_loaded_hash, buffer_loaded_hash, buffer_loaded_count, buffer_cracked_count;
+static cl_uint *loaded_hash = NULL, loaded_count = 0;
+
+cl_mem buffer_match_count;
+
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes;
 static char *saved_plain;
@@ -77,13 +84,28 @@ static void create_clobj(int kpc){
 	data_info = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(unsigned int) * 2, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating data_info out argument");
 
+    buffer_match_count = clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, sizeof(cl_uint), NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer_match_count out argument");
+
+    buffer_loaded_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(cl_uint), NULL, &ret_code);
+    HANDLE_CLERROR(ret_code, "Error creating buffer_loaded_count out argument");
+
+    buffer_cracked_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(cl_uint), NULL, &ret_code);
+    HANDLE_CLERROR(ret_code, "Error creating buffer_cracked_count out argument");
+    
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 0, sizeof(data_info),
 		(void *) &data_info), "Error setting argument 0");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 1, sizeof(buffer_keys),
 		(void *) &buffer_keys), "Error setting argument 1");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out),
 		(void *) &buffer_out), "Error setting argument 2");
-
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 4, sizeof(buffer_loaded_count),
+		(void *) &buffer_loaded_count), "Error setting argument 4");          
+	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 5, sizeof(buffer_match_count),
+		(void *) &buffer_match_count), "Error setting argument 5");    
+	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_cracked_count),
+		(void *) &buffer_cracked_count), "Error setting argument 6");
+    
 	datai[0] = PLAINTEXT_LENGTH;
 	datai[1] = kpc;
 	global_work_size = kpc;
@@ -107,6 +129,15 @@ static void release_clobj(void){
 	ret_code = clReleaseMemObject(pinned_partial_hashes);
 	HANDLE_CLERROR(ret_code, "Error Releasing pinned_partial_hashes");
 	free(res_hashes);
+
+    ret_code = clReleaseMemObject(buffer_match_count);
+    HANDLE_CLERROR(ret_code, "Error Releasing buffer_match_count");
+
+    ret_code = clReleaseMemObject(buffer_loaded_count);
+    HANDLE_CLERROR(ret_code, "Error Releasing buffer_loaded_count");
+
+    ret_code = clReleaseMemObject(buffer_cracked_count);
+    HANDLE_CLERROR(ret_code, "Error Releasing buffer_cracked_count");    
 }
 
 static void find_best_kpc(void){
@@ -265,8 +296,58 @@ static char *get_key(int index) {
 	return get_key_saved;
 }
 
+static void reset(struct db_main *db)
+{
+    cl_uint count = 0;
+    struct db_salt *current_salt;
+    struct db_password *current_password;
+    int index = 0;
+    int loaded_hash_size;
+    
+    if (db == NULL) {
+        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) 0), "Error setting argument 3");
+         return;
+    }
+
+    loaded_count = count = db->password_count;
+    loaded_hash_size = sizeof(cl_uint) * 4 * count;
+    
+    if (!loaded_hash) {
+        pinned_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR, loaded_hash_size, NULL, &ret_code);
+        HANDLE_CLERROR(ret_code, "Error creating page-locked memory pinned_loaded_hash");
+        
+        loaded_hash = (cl_uint *) clEnqueueMapBuffer(queue[gpu_id], pinned_saved_keys, CL_TRUE, CL_MAP_WRITE | CL_MAP_READ, 0, loaded_hash_size,  0, NULL, NULL, &ret_code);
+        HANDLE_CLERROR(ret_code, "Error mapping page-locked memory loaded_hash");
+        buffer_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, loaded_hash_size, NULL, &ret_code);
+        HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_loaded_hash");
+        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash), (void *) &buffer_loaded_hash), "Error setting argument 3");        
+    }
+    
+    current_salt = db->salts;
+    current_password = current_salt->list;
+
+    do {
+        cl_uint* binary = (cl_uint*)current_password->binary;
+        loaded_hash[index] = binary[0];
+        loaded_hash[count+index] = binary[1];
+        loaded_hash[2*count+index] = binary[2];
+        loaded_hash[3*count+index] = binary[3];
+        ++index;
+    } while (current_password = current_password->next);
+    
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_hash, CL_TRUE, 0, loaded_hash_size, loaded_hash, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_hash");
+    
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_hash");
+}
+
+static void done()
+{
+}
+
 static int crypt_all(int count, struct db_salt *salt)
 {
+    cl_uint match_count;
+    cl_uint zero = 0;
 #ifdef DEBUGVERBOSE
 	int i, j;
 	unsigned char *p = (unsigned char *) saved_plain;
@@ -286,7 +367,17 @@ static int crypt_all(int count, struct db_salt *salt)
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_keys, CL_TRUE, 0,
 	    (PLAINTEXT_LENGTH + 1) * max_keys_per_crypt, saved_plain, 0, NULL, NULL),
 	    "failed in clEnqueueWriteBuffer buffer_keys");
+    
+    // Reset buffer_match_count on device
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_match_count, CL_TRUE, 0, sizeof(cl_uint), &zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_match_count");
 
+    // Copy loaded count to device
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_count, CL_TRUE, 0, sizeof(cl_uint), &loaded_count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_count");
+
+    // Copy count to crack to device
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_cracked_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_cracked_count");
+
+    // Do crack
 	HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[gpu_id], crypt_kernel, 1, NULL,
 	    &global_work_size, &local_work_size, 0, NULL, &profilingEvent),
 	    "failed in clEnqueueNDRangeKernel");
@@ -297,6 +388,9 @@ static int crypt_all(int count, struct db_salt *salt)
 	    "failed in reading data back");
 	have_full_hashes = 0;
 
+    // read back matched count
+    HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_match_count, CL_TRUE, 0, sizeof(cl_uint) , &match_count, 0, NULL, NULL), "failed in reading match_count back");
+    
 #ifdef DEBUGVERBOSE
 	p = (unsigned char *) partial_hashes;
 	for (i = 0; i < 2; i++) {
@@ -364,8 +458,8 @@ struct fmt_main fmt_opencl_rawMD5 = {
 		tests
 	}, {
 		fmt_MD5_init,
-        fmt_default_done,
-        fmt_default_reset,
+        done,
+        reset,
 		fmt_default_prepare,
 		valid,
 		split,
