@@ -90,7 +90,7 @@ static void create_clobj(int kpc){
     buffer_loaded_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(cl_uint), NULL, &ret_code);
     HANDLE_CLERROR(ret_code, "Error creating buffer_loaded_count out argument");
 
-    buffer_cracked_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(cl_uint), NULL, &ret_code);
+    buffer_cracked_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE, sizeof(cl_uint), NULL, &ret_code);
     HANDLE_CLERROR(ret_code, "Error creating buffer_cracked_count out argument");
     
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 0, sizeof(data_info),
@@ -99,6 +99,7 @@ static void create_clobj(int kpc){
 		(void *) &buffer_keys), "Error setting argument 1");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out),
 		(void *) &buffer_out), "Error setting argument 2");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) NULL), "Error setting argument 3");
     HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 4, sizeof(buffer_loaded_count),
 		(void *) &buffer_loaded_count), "Error setting argument 4");          
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 5, sizeof(buffer_match_count),
@@ -305,7 +306,7 @@ static void reset(struct db_main *db)
     int loaded_hash_size;
     
     if (db == NULL) {
-        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) 0), "Error setting argument 3");
+        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) NULL), "Error setting argument 3");
          return;
     }
 
@@ -400,7 +401,8 @@ static int crypt_all(int count, struct db_salt *salt)
 	}
 	fprintf(stderr, "\n");;
 #endif
-    return count;
+
+    return loaded_count == 0 ? count: match_count;
 }
 
 static int cmp_one(void *binary, int index){
