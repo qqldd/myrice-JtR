@@ -225,8 +225,9 @@ static char *get_key(int index)
 #endif
 }
 
-static int crypt_all(int count, struct db_salt *salt)
+static int crypt_all(int *pcount, struct db_salt *salt)
 {
+    int count = *pcount;
 #if MMX_COEF
 	DO_MMX_MD5(saved_key, crypt_key);
 #else

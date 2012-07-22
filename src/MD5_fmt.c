@@ -344,7 +344,8 @@ static int cmp_exact(char *source, int index)
 #endif
 }
 
-static int crypt_all(int count, struct db_salt *salt) {
+static int crypt_all(int *pcount, struct db_salt *salt) {
+	int count = *pcount;
 #ifdef MD5_SSE_PARA
 #ifdef _OPENMP
 	int t;

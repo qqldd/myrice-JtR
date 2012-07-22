@@ -345,8 +345,9 @@ static void done()
 {
 }
 
-static int crypt_all(int count, struct db_salt *salt)
+static int crypt_all(int *pcount, struct db_salt *salt)
 {
+    int count = *pcount;
     cl_uint match_count;
     cl_uint zero = 0;
 #ifdef DEBUGVERBOSE
