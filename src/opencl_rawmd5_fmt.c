@@ -290,13 +290,20 @@ static void set_key(char *key, int index) {
 }
 
 static char *get_key(int index) {
+    
 	int length = -1;
-	int base = index * (PLAINTEXT_LENGTH + 1);
+	int base;
     char *keys = NULL;
+    
     if (loaded_count == 0)
         keys = saved_plain;
-    else
+    else {
         keys = matched_keys;
+        if (index >= loaded_count)
+            index = loaded_count-1;
+    }
+    
+    base = index * (PLAINTEXT_LENGTH + 1);    
 	do {
 		length++;
 		get_key_saved[length] = keys[base + length];
