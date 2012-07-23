@@ -67,7 +67,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
             /* padding code (borrowed from MD5_eq.c) */
             char *p = (char *) key;
             for (i = 0; i != 64 && p[i]; i++);
-
+            uint length = i;
             //          if ( alpha_i != -1) {
                 
 //            }
@@ -172,6 +172,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                         uint index = atom_inc(matched_count);
                         uint m_base  = index * (KEY_LENGTH / 4);
 
+                        PUTCHAR(key, length, 0);
                         for (int j = 0; j != (KEY_LENGTH / 4) && key[j]; j++)
                             matched_keys[m_base + j] = key[j];
                         

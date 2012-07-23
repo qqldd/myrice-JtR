@@ -292,9 +292,14 @@ static void set_key(char *key, int index) {
 static char *get_key(int index) {
 	int length = -1;
 	int base = index * (PLAINTEXT_LENGTH + 1);
+    char *keys = NULL;
+    if (loaded_count == 0)
+        keys = saved_plain;
+    else
+        keys = matched_keys;
 	do {
 		length++;
-		get_key_saved[length] = saved_plain[base + length];
+		get_key_saved[length] = keys[base + length];
 	}
 	while (get_key_saved[length]);
 	get_key_saved[length] = 0;
