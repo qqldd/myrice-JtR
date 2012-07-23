@@ -30,10 +30,13 @@
 cl_command_queue queue_prof;
 cl_mem pinned_saved_keys, pinned_partial_hashes, buffer_out, buffer_keys, data_info;
 
-cl_mem pinned_loaded_hash, buffer_loaded_hash, buffer_loaded_count, buffer_cracked_count;
+cl_mem pinned_loaded_hash, buffer_loaded_hash, buffer_cracked_count;
 static cl_uint *loaded_hash = NULL, loaded_count = 0;
 
-cl_mem buffer_match_count;
+cl_mem buffer_matched_count;
+
+cl_mem buffer_matched_keys;
+static char *matched_keys;
 
 static cl_uint *partial_hashes;
 static cl_uint *res_hashes;
@@ -42,10 +45,16 @@ static char get_key_saved[PLAINTEXT_LENGTH + 1];
 
 #define MIN_KEYS_PER_CRYPT      2048
 #define MAX_KEYS_PER_CRYPT      MD5_NUM_KEYS
-static unsigned int datai[2];
+
+// datai: 0: PLAINTEXT_LENGTH, 1: kpc 2: loaded_count
+#define DATA_INFO_NUM 3
+static unsigned int datai[DATA_INFO_NUM];
+
 static int have_full_hashes;
 
 static int max_keys_per_crypt = MD5_NUM_KEYS;
+
+static int max_hash_count;
 
 static struct fmt_tests tests[] = {
 	{"098f6bcd4621d373cade4e832627b4f6", "test"},
@@ -81,18 +90,15 @@ static void create_clobj(int kpc){
 		BINARY_SIZE * kpc, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_out");
 
-	data_info = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(unsigned int) * 2, NULL, &ret_code);
+	data_info = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(unsigned int) * DATA_INFO_NUM, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating data_info out argument");
 
-    buffer_match_count = clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, sizeof(cl_uint), NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error creating buffer_match_count out argument");
-
-    buffer_loaded_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(cl_uint), NULL, &ret_code);
-    HANDLE_CLERROR(ret_code, "Error creating buffer_loaded_count out argument");
+    buffer_matched_count = clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, sizeof(cl_uint), NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer_matched_count out argument");
 
     buffer_cracked_count = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE, sizeof(cl_uint), NULL, &ret_code);
     HANDLE_CLERROR(ret_code, "Error creating buffer_cracked_count out argument");
-    
+
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 0, sizeof(data_info),
 		(void *) &data_info), "Error setting argument 0");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 1, sizeof(buffer_keys),
@@ -100,15 +106,16 @@ static void create_clobj(int kpc){
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out),
 		(void *) &buffer_out), "Error setting argument 2");
     HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) NULL), "Error setting argument 3");
-    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 4, sizeof(buffer_loaded_count),
-		(void *) &buffer_loaded_count), "Error setting argument 4");          
-	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 5, sizeof(buffer_match_count),
-		(void *) &buffer_match_count), "Error setting argument 5");    
-	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_cracked_count),
-		(void *) &buffer_cracked_count), "Error setting argument 6");
+	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 4, sizeof(buffer_matched_count),
+		(void *) &buffer_matched_count), "Error setting argument 4");    
+	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 5, sizeof(buffer_cracked_count),
+		(void *) &buffer_cracked_count), "Error setting argument 5");
+	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
+		(void *) NULL), "Error setting argument 6");
     
 	datai[0] = PLAINTEXT_LENGTH;
 	datai[1] = kpc;
+    datai[2] = 0;
 	global_work_size = kpc;
 }
 
@@ -131,11 +138,8 @@ static void release_clobj(void){
 	HANDLE_CLERROR(ret_code, "Error Releasing pinned_partial_hashes");
 	free(res_hashes);
 
-    ret_code = clReleaseMemObject(buffer_match_count);
-    HANDLE_CLERROR(ret_code, "Error Releasing buffer_match_count");
-
-    ret_code = clReleaseMemObject(buffer_loaded_count);
-    HANDLE_CLERROR(ret_code, "Error Releasing buffer_loaded_count");
+    ret_code = clReleaseMemObject(buffer_matched_count);
+    HANDLE_CLERROR(ret_code, "Error Releasing buffer_matched_count");
 
     ret_code = clReleaseMemObject(buffer_cracked_count);
     HANDLE_CLERROR(ret_code, "Error Releasing buffer_cracked_count");    
@@ -161,7 +165,7 @@ static void find_best_kpc(void){
 			memcpy(&(saved_plain[i * (PLAINTEXT_LENGTH + 1)]), "abcaaeaf", PLAINTEXT_LENGTH + 1);
 			saved_plain[i * (PLAINTEXT_LENGTH + 1) + 8] = 0x80;
 		}
-        	clEnqueueWriteBuffer(queue_prof, data_info, CL_TRUE, 0, sizeof(unsigned int)*2, datai, 0, NULL, NULL);
+        	clEnqueueWriteBuffer(queue_prof, data_info, CL_TRUE, 0, sizeof(unsigned int) * DATA_INFO_NUM, datai, 0, NULL, NULL);
 		clEnqueueWriteBuffer(queue_prof, buffer_keys, CL_TRUE, 0, (PLAINTEXT_LENGTH + 1) * num, saved_plain, 0, NULL, NULL);
     		ret_code = clEnqueueNDRangeKernel( queue_prof, crypt_kernel, 1, NULL, &global_work_size, &local_work_size, 0, NULL, &myEvent);
 		if(ret_code != CL_SUCCESS) {
@@ -306,14 +310,14 @@ static void reset(struct db_main *db)
     int loaded_hash_size;
     
     if (db == NULL) {
-        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash),(void *) NULL), "Error setting argument 3");
          return;
     }
 
-    loaded_count = count = db->password_count;
+    datai[2] = loaded_count = count = db->password_count;
     loaded_hash_size = sizeof(cl_uint) * 4 * count;
     
     if (!loaded_hash) {
+        // Allocate loaded hash
         pinned_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR, loaded_hash_size, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error creating page-locked memory pinned_loaded_hash");
         
@@ -321,7 +325,19 @@ static void reset(struct db_main *db)
         HANDLE_CLERROR(ret_code, "Error mapping page-locked memory loaded_hash");
         buffer_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, loaded_hash_size, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_loaded_hash");
-        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash), (void *) &buffer_loaded_hash), "Error setting argument 3");        
+        // Set new allocated buffer_loaded_hash on Device
+        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 3, sizeof(buffer_loaded_hash), (void *) &buffer_loaded_hash), "Error setting argument 3");
+
+        // Allocate matched keys, matched_keys should not greater the loaded count
+        buffer_matched_keys =  clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, (PLAINTEXT_LENGTH+1) * loaded_count, NULL, &ret_code);
+        HANDLE_CLERROR(ret_code, "Error creating buffer_matched_keys out argument");
+
+        matched_keys = malloc(sizeof(char[PLAINTEXT_LENGTH+1]) * loaded_count);
+        
+        // Set new allocated buffer_matched_keys on Device
+        HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
+		(void *) &buffer_matched_keys), "Error setting argument 6");    
+        
     }
     
     current_salt = db->salts;
@@ -334,21 +350,23 @@ static void reset(struct db_main *db)
         loaded_hash[2*count+index] = binary[2];
         loaded_hash[3*count+index] = binary[3];
         ++index;
-    } while (current_password = current_password->next);
+    } while ((current_password = current_password->next) != NULL);
     
     HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_hash, CL_TRUE, 0, loaded_hash_size, loaded_hash, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_hash");
     
-    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_hash");
 }
 
 static void done()
 {
+    loaded_count = 0;
+    release_clobj();
 }
 
 static int crypt_all(int *pcount, struct db_salt *salt)
 {
     int count = *pcount;
-    cl_uint match_count;
+
+    cl_uint matched_count;
     cl_uint zero = 0;
 #ifdef DEBUGVERBOSE
 	int i, j;
@@ -362,19 +380,19 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	}
 	fprintf(stderr, "\n");
 #endif
+
+    max_hash_count = loaded_count == 0 ? max_keys_per_crypt : loaded_count;
+
 	// copy keys to the device
 	HANDLE_CLERROR( clEnqueueWriteBuffer(queue[gpu_id], data_info, CL_TRUE, 0,
-	    sizeof(unsigned int) * 2, datai, 0, NULL, NULL),
+	    sizeof(unsigned int) * DATA_INFO_NUM, datai, 0, NULL, NULL),
 	    "failed in clEnqueueWriteBuffer data_info");
 	HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_keys, CL_TRUE, 0,
 	    (PLAINTEXT_LENGTH + 1) * max_keys_per_crypt, saved_plain, 0, NULL, NULL),
 	    "failed in clEnqueueWriteBuffer buffer_keys");
     
-    // Reset buffer_match_count on device
-    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_match_count, CL_TRUE, 0, sizeof(cl_uint), &zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_match_count");
-
-    // Copy loaded count to device
-    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_count, CL_TRUE, 0, sizeof(cl_uint), &loaded_count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_count");
+    // Reset buffer_matched_count on device
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_matched_count, CL_TRUE, 0, sizeof(cl_uint), &zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_matched_count");
 
     // Copy count to crack to device
     HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_cracked_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_cracked_count");
@@ -384,14 +402,20 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	    &global_work_size, &local_work_size, 0, NULL, &profilingEvent),
 	    "failed in clEnqueueNDRangeKernel");
 	HANDLE_CLERROR(clFinish(queue[gpu_id]),"failed in clFinish");
+
 	// read back partial hashes
 	HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_out, CL_TRUE, 0,
-	    sizeof(cl_uint) * max_keys_per_crypt, partial_hashes, 0, NULL, NULL),
+	    sizeof(cl_uint) * max_hash_count, partial_hashes, 0, NULL, NULL),
 	    "failed in reading data back");
 	have_full_hashes = 0;
 
-    // read back matched count
-    HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_match_count, CL_TRUE, 0, sizeof(cl_uint) , &match_count, 0, NULL, NULL), "failed in reading match_count back");
+    if (loaded_count != 0) {
+        // read back matched password
+        HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_matched_keys, CL_TRUE, 0, (PLAINTEXT_LENGTH+1)*loaded_count , matched_keys, 0, NULL, NULL), "failed in reading matched_keys back");
+    
+        // read back matched count 
+        HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_matched_count, CL_TRUE, 0, sizeof(cl_uint) , &matched_count, 0, NULL, NULL), "failed in reading matched_count back");
+    }
     
 #ifdef DEBUGVERBOSE
 	p = (unsigned char *) partial_hashes;
@@ -403,7 +427,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	fprintf(stderr, "\n");;
 #endif
 
-    return loaded_count == 0 ? count: match_count;
+    return loaded_count == 0 ? count: matched_count;
 }
 
 static int cmp_one(void *binary, int index){
@@ -423,22 +447,22 @@ static int cmp_all(void *binary, int count) {
 	return 0;
 }
 
-static int cmp_exact(char *source, int count){
+static int cmp_exact(char *source, int index){
 	unsigned int *t = (unsigned int *) get_binary(source);
 
 	if (!have_full_hashes){
 	clEnqueueReadBuffer(queue[gpu_id], buffer_out, CL_TRUE,
-		sizeof(cl_uint) * (max_keys_per_crypt),
-		sizeof(cl_uint) * 3 * max_keys_per_crypt, res_hashes, 0,
+		sizeof(cl_uint) * (max_hash_count),
+		sizeof(cl_uint) * 3 * max_hash_count, res_hashes, 0,
 		NULL, NULL);
 		have_full_hashes = 1;
 	}
 
-	if (t[1]!=res_hashes[count])
+	if (t[1]!=res_hashes[index])
 		return 0;
-	if (t[2]!=res_hashes[1*max_keys_per_crypt+count])
+	if (t[2]!=res_hashes[1*max_hash_count+index])
 		return 0;
-	if (t[3]!=res_hashes[2*max_keys_per_crypt+count])
+	if (t[3]!=res_hashes[2*max_hash_count+index])
 		return 0;
 	return 1;
 }
