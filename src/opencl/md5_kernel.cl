@@ -54,6 +54,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
 //        for (int alpha_i = -1; alpha_i < ALPHA_SET_SIZE; ++alpha_i) {
             
             uint key[16] = { 0 };
+            uint tmp_key[16];
             uint i;
             uint num_keys = data_info[1];
             uint KEY_LENGTH = data_info[0] + 1;
@@ -62,7 +63,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
             int base = id * (KEY_LENGTH / 4);
 
             for (i = 0; i != (KEY_LENGTH / 4) && keys[base + i]; i++)
-                key[i] = keys[base + i];
+                tmp_key[i] = key[i] = keys[base + i];
 
             /* padding code (borrowed from MD5_eq.c) */
             char *p = (char *) key;
@@ -170,12 +171,14 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 for (int i = 0; i < loaded_count; ++i) {
                     if (h[0] == loaded_hash[i]) {
                         uint index = atom_inc(matched_count);
-                        uint m_base  = index * (KEY_LENGTH / 4);
+                        uint m_base  = index * KEY_LENGTH;
 
-                        PUTCHAR(key, length, 0);
-                        for (int j = 0; j != (KEY_LENGTH / 4) && key[j]; j++)
-                            matched_keys[m_base + j] = key[j];
+                        PUTCHAR(tmp_key, length, '\0');
+                        char *q = (char*)tmp_key;
                         
+                        for (int j = 0; j <= length; ++j)
+                            PUTCHAR(matched_keys, m_base+j, q[j]);
+
                         hashes[index] = h[0];
                         hashes[loaded_count + index] = h[1];
                         hashes[2 * loaded_count + index] = h[2];
