@@ -34,6 +34,7 @@ cl_mem pinned_loaded_hash, buffer_loaded_hash, buffer_cracked_count;
 static cl_uint *loaded_hash = NULL, loaded_count = 0;
 
 cl_mem buffer_matched_count;
+cl_uint matched_count;
 
 cl_mem buffer_matched_keys;
 static char *matched_keys;
@@ -289,20 +290,11 @@ static void set_key(char *key, int index) {
 	memset(&saved_plain[base + length + 1], 0, 7);	// ugly hack which "should" work!
 }
 
-static char *get_key(int index) {
-    
+static char *cpy_key_out(int index, char *keys)
+{
 	int length = -1;
-	int base;
-    char *keys = NULL;
-    
-    if (loaded_count == 0)
-        keys = saved_plain;
-    else {
-        keys = matched_keys;
-        if (index >= loaded_count)
-            index = loaded_count-1;
-    }
-    
+   	int base;
+
     base = index * (PLAINTEXT_LENGTH + 1);    
 	do {
 		length++;
@@ -310,7 +302,24 @@ static char *get_key(int index) {
 	}
 	while (get_key_saved[length]);
 	get_key_saved[length] = 0;
-	return get_key_saved;
+    
+    return get_key_saved;
+}
+
+static char *get_key(int index) {
+    
+    char *keys = NULL;
+    
+    if (loaded_count != 0 && matched_count != 0) {
+        keys = matched_keys;
+        if (index >= loaded_count)
+            return cpy_key_out(index, saved_plain);
+    }
+    else
+        keys = saved_plain;
+
+    
+	return cpy_key_out(index, keys);
 }
 
 static void reset(struct db_main *db)
@@ -377,8 +386,6 @@ static void done()
 static int crypt_all(int *pcount, struct db_salt *salt)
 {
     int count = *pcount;
-
-    cl_uint matched_count;
     cl_uint zero = 0;
 #ifdef DEBUGVERBOSE
 	int i, j;
@@ -394,7 +401,8 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 #endif
 
     max_hash_count = loaded_count == 0 ? max_keys_per_crypt : loaded_count;
-
+    matched_count = 0;
+    
 	// copy keys to the device
 	HANDLE_CLERROR( clEnqueueWriteBuffer(queue[gpu_id], data_info, CL_TRUE, 0,
 	    sizeof(unsigned int) * DATA_INFO_NUM, datai, 0, NULL, NULL),
@@ -427,6 +435,8 @@ static int crypt_all(int *pcount, struct db_salt *salt)
     
         // read back matched count 
         HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_matched_count, CL_TRUE, 0, sizeof(cl_uint) , &matched_count, 0, NULL, NULL), "failed in reading matched_count back");
+        *pcount *= 53*53;
+        
     }
     
 #ifdef DEBUGVERBOSE
