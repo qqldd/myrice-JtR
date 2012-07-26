@@ -16,7 +16,7 @@
 #include "loader.h"
 #include "common-opencl.h"
 
-#define MD5_NUM_KEYS        1024*2048
+#define MD5_NUM_KEYS        2048*16
 #define PLAINTEXT_LENGTH    31
 #define FORMAT_LABEL        "raw-md5-opencl"
 #define FORMAT_NAME         "Raw MD5"
@@ -34,7 +34,7 @@ cl_mem pinned_loaded_hash, buffer_loaded_hash, buffer_cracked_count;
 static cl_uint *loaded_hash = NULL, loaded_count = 0;
 
 cl_mem buffer_matched_count;
-cl_uint matched_count;
+static cl_uint matched_count;
 
 cl_mem buffer_matched_keys;
 static char *matched_keys;
@@ -63,6 +63,36 @@ static struct fmt_tests tests[] = {
 	{NULL}
 };
 
+static void create_hash(int num)
+{
+    res_hashes = malloc(sizeof(cl_uint) * 3 * num);
+
+	pinned_partial_hashes = clCreateBuffer(context[gpu_id],
+		CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR, 4 * num, NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating page-locked memory pinned_partial_hashes");
+
+	partial_hashes = (cl_uint *) clEnqueueMapBuffer(queue[gpu_id],
+		pinned_partial_hashes, CL_TRUE, CL_MAP_READ, 0, 4 * num, 0, NULL, NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error mapping page-locked memory partial_hashes");
+
+	buffer_out = clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY,
+		BINARY_SIZE * num, NULL, &ret_code);
+	HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_out");
+}
+
+static void release_hash()
+{
+	ret_code = clEnqueueUnmapMemObject(queue[gpu_id], pinned_partial_hashes, partial_hashes, 0,NULL,NULL);
+	HANDLE_CLERROR(ret_code, "Error Ummapping partial_hashes");
+
+	ret_code = clReleaseMemObject(pinned_partial_hashes);
+	HANDLE_CLERROR(ret_code, "Error Releasing pinned_partial_hashes");
+    
+	ret_code = clReleaseMemObject(buffer_out);
+	HANDLE_CLERROR(ret_code, "Error Releasing buffer_out");
+	free(res_hashes);
+}
+
 static void create_clobj(int kpc){
 	pinned_saved_keys = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR,
 		(PLAINTEXT_LENGTH + 1) * kpc, NULL, &ret_code);
@@ -72,24 +102,14 @@ static void create_clobj(int kpc){
 		CL_TRUE, CL_MAP_WRITE | CL_MAP_READ, 0,
 		(PLAINTEXT_LENGTH + 1) * kpc, 0, NULL, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error mapping page-locked memory saved_plain");
-	res_hashes = malloc(sizeof(cl_uint) * 3 * kpc);
 
-	pinned_partial_hashes = clCreateBuffer(context[gpu_id],
-		CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR, 4 * kpc, NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error creating page-locked memory pinned_partial_hashes");
-
-	partial_hashes = (cl_uint *) clEnqueueMapBuffer(queue[gpu_id],
-		pinned_partial_hashes, CL_TRUE, CL_MAP_READ, 0, 4 * kpc, 0, NULL, NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error mapping page-locked memory partial_hashes");
+    // create hashes
+    create_hash(kpc);
 
 	// create and set arguments
 	buffer_keys = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY,
 		(PLAINTEXT_LENGTH + 1) * kpc, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_keys");
-
-	buffer_out = clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY,
-		BINARY_SIZE * kpc, NULL, &ret_code);
-	HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_out");
 
 	data_info = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, sizeof(unsigned int) * DATA_INFO_NUM, NULL, &ret_code);
 	HANDLE_CLERROR(ret_code, "Error creating data_info out argument");
@@ -121,24 +141,19 @@ static void create_clobj(int kpc){
 }
 
 static void release_clobj(void){
-	cl_int ret_code;
 
-	ret_code = clEnqueueUnmapMemObject(queue[gpu_id], pinned_partial_hashes, partial_hashes, 0,NULL,NULL);
-	HANDLE_CLERROR(ret_code, "Error Ummapping partial_hashes");
 	ret_code = clEnqueueUnmapMemObject(queue[gpu_id], pinned_saved_keys, saved_plain, 0, NULL, NULL);
 	HANDLE_CLERROR(ret_code, "Error Ummapping saved_plain");
 	ret_code = clReleaseMemObject(buffer_keys);
 	HANDLE_CLERROR(ret_code, "Error Releasing buffer_keys");
-	ret_code = clReleaseMemObject(buffer_out);
-	HANDLE_CLERROR(ret_code, "Error Releasing buffer_out");
+
 	ret_code = clReleaseMemObject(data_info);
 	HANDLE_CLERROR(ret_code, "Error Releasing data_info");
 	ret_code = clReleaseMemObject(pinned_saved_keys);
 	HANDLE_CLERROR(ret_code, "Error Releasing pinned_saved_keys");
-	ret_code = clReleaseMemObject(pinned_partial_hashes);
-	HANDLE_CLERROR(ret_code, "Error Releasing pinned_partial_hashes");
-	free(res_hashes);
 
+    release_hash();
+    
     ret_code = clReleaseMemObject(buffer_matched_count);
     HANDLE_CLERROR(ret_code, "Error Releasing buffer_matched_count");
 
@@ -309,10 +324,12 @@ static char *cpy_key_out(int index, char *keys)
 static char *get_key(int index) {
     
     char *keys = NULL;
+    if (index >= MD5_NUM_KEYS)
+        index = MD5_NUM_KEYS-1;
     
     if (loaded_count != 0 && matched_count != 0) {
         keys = matched_keys;
-        if (index >= loaded_count)
+        if (index >= matched_count)
             return cpy_key_out(index, saved_plain);
     }
     else
@@ -342,7 +359,7 @@ static void reset(struct db_main *db)
         pinned_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE | CL_MEM_ALLOC_HOST_PTR, loaded_hash_size, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error creating page-locked memory pinned_loaded_hash");
         
-        loaded_hash = (cl_uint *) clEnqueueMapBuffer(queue[gpu_id], pinned_saved_keys, CL_TRUE, CL_MAP_WRITE | CL_MAP_READ, 0, loaded_hash_size,  0, NULL, NULL, &ret_code);
+        loaded_hash = (cl_uint *) clEnqueueMapBuffer(queue[gpu_id], pinned_loaded_hash, CL_TRUE, CL_MAP_WRITE | CL_MAP_READ, 0, loaded_hash_size,  0, NULL, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error mapping page-locked memory loaded_hash");
         buffer_loaded_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, loaded_hash_size, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error creating buffer argument buffer_loaded_hash");
@@ -358,7 +375,12 @@ static void reset(struct db_main *db)
         // Set new allocated buffer_matched_keys on Device
         HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
 		(void *) &buffer_matched_keys), "Error setting argument 6");    
-        
+
+        if (loaded_count > MD5_NUM_KEYS) {
+            release_hash();
+            create_hash(loaded_count);
+            HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out), (void *) &buffer_out), "Error setting argument 2");
+        }
     }
     
     current_salt = db->salts;
@@ -387,6 +409,7 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 {
     int count = *pcount;
     cl_uint zero = 0;
+    
 #ifdef DEBUGVERBOSE
 	int i, j;
 	unsigned char *p = (unsigned char *) saved_plain;
@@ -423,11 +446,6 @@ static int crypt_all(int *pcount, struct db_salt *salt)
 	    "failed in clEnqueueNDRangeKernel");
 	HANDLE_CLERROR(clFinish(queue[gpu_id]),"failed in clFinish");
 
-	// read back partial hashes
-	HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_out, CL_TRUE, 0,
-	    sizeof(cl_uint) * max_hash_count, partial_hashes, 0, NULL, NULL),
-	    "failed in reading data back");
-	have_full_hashes = 0;
 
     if (loaded_count != 0) {
         // read back matched password
@@ -436,8 +454,14 @@ static int crypt_all(int *pcount, struct db_salt *salt)
         // read back matched count 
         HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_matched_count, CL_TRUE, 0, sizeof(cl_uint) , &matched_count, 0, NULL, NULL), "failed in reading matched_count back");
         *pcount *= 53*53;
-        
     }
+
+    // read back partial hashes
+    if ( (loaded_count && matched_count) || loaded_count == 0)
+        HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_out, CL_TRUE, 0, sizeof(cl_uint) * max_hash_count, partial_hashes, 0, NULL, NULL), "failed in reading data back");
+	have_full_hashes = 0;
+        
+    
     
 #ifdef DEBUGVERBOSE
 	p = (unsigned char *) partial_hashes;
