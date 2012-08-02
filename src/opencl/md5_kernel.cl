@@ -14,6 +14,7 @@
 
 #pragma OPENCL EXTENSION cl_khr_byte_addressable_store : disable
 #pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable
+#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable
 
 /* Macros for reading/writing chars from int32's (from rar_kernel.cl) */
 #define GETCHAR(buf, index) (((uchar*)(buf))[(index)])
@@ -38,13 +39,49 @@ __constant char alpha_set[] = {
 };
 #define ALPHA_SET_SIZE 52
 
+#define MD5_HASH_SHR 2
+#define MD5_PASSWORD_HASH_SIZE_0 0x10000
+#define MD5_PASSWORD_HASH_SIZE_1 0x10000 // 64K
+#define MD5_PASSWORD_HASH_SIZE_2 0x1000000 // 16M
+
+static uint get_hash_low(uint hash) { return hash & 0xFFFF; }
+static uint get_hash_high(uint hash) { return hash & 0xFFFFFF; }
+
+// kernel void create_bitmaps(global const uint *data_info, global const uint* loaded_hash, global uint* bitmaps, global int* hashtable, global int* loaded_next_hash, global int* semaphor)
+// {
+//     const uint loaded_count = data_info[0];
+//     const uint hash_num = data_info[1];
+//     const uint id = get_global_id(0);
+
+//     if (id < loaded_count) {
+//         uint hash;
+//         uint l_hash = loaded_hash[id];
+        
+//         if (hash_num == MD5_PASSWORD_HASH_SIZE_2)
+//             hash = get_hash_high(l_hash);
+//         else
+//             hash = get_hash_low(l_hash);
+//         uint index = hash / (sizeof(*bitmaps) * 8);
+//         uint bit_index = hash % (sizeof(*bitmaps) * 8);
+//         uint val = 1U << bit_index;
+        
+//         GetSemaphor(semaphor);
+//         atom_xchg(&bitmaps[index], bitmaps[index] | val);
+//         hash >>= MD5_HASH_SHR;
+//         int h = hashtable[hash];
+//         atom_xchg(&loaded_next_hash[id], h);
+//         atom_xchg(&hashtable[hash], id);
+//         ReleaseSemaphor(semaphor);
+//     }
+// }
+
 /* some constants used below magically appear after make */
 //#define KEY_LENGTH (MD5_PLAINTEXT_LENGTH + 1)
 
 /* OpenCL kernel entry point. Copy KEY_LENGTH bytes key to be hashed from
  * global to local (thread) memory. Break the key into 16 32-bit (uint)
  * words. MD5 hash of a key is 128 bit (uint4). */
-__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global const uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys)
+__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys, global uint* bitmaps, global int* hashtable, global int* loaded_next_hash)
 {
 	int id = get_global_id(0);
     int init_count = *cracked_count;
@@ -54,7 +91,8 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
         uint KEY_LENGTH = data_info[0] + 1;
         uint loaded_count = data_info[2];
         int base = id * (KEY_LENGTH / 4);
-
+        uint hash_num = data_info[3];
+        
         int loop_num = loaded_count == 0 ? 0 : ALPHA_SET_SIZE;
         
         // -1 for add none character
@@ -178,22 +216,65 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 
                 // Compare the hashes and return the matched count
                 if (loaded_count != 0) {
-                    for (int i = 0; i < loaded_count; ++i) {
-                        if (h[0] == loaded_hash[i]) {
-                            uint index = atom_inc(matched_count);
-                            uint m_base  = index * KEY_LENGTH;
+//                    for (int i = 0; i < loaded_count; ++i) {
+//                        if (h[0] == loaded_hash[i] && h[1] == loaded_hash[loaded_count+i]) {
+                    uint hash;
+                    // 8KB bitmaps in local memory
+                    //                  __local int local_bitmaps[2048];
+//                    __private int p_bitmaps[2048];
+                    int use_local = 0;
+                    int bitmaps_num;
+                    
+                    if (hash_num == MD5_PASSWORD_HASH_SIZE_2) {
+                        hash = get_hash_high(h[0]);
+                    }
+                    else {
+                        hash = get_hash_low(h[0]);
+                        // bitmaps_num = (hash_num+sizeof(int)*8-1)/(sizeof(int)*8);
+                        // uint lws = get_local_size(0);
+                        // uint lid = get_local_id(0);
 
-                            PUTCHAR(key, length, '\0');
-                            char *q = (char*)key;
+                        // for (int i = 0; i < bitmaps_num; i+=lws) {
+                        //     uint index = i*lws+lid;
+                        //     if (index < bitmaps_num)
+                        //         local_bitmaps[index] = 0;//bitmaps[index];
+                        // }
+//                        if (lws == 0)
+                        //     for(int i = 0; i < 2048; i++)
+                        //         local_bitmaps[i] = bitmaps[i];
+                        // use_local = 1;
+                        // barrier(CLK_LOCAL_MEM_FENCE);
                         
-                            for (int j = 0; j <= length; ++j)
-                                PUTCHAR(matched_keys, m_base+j, q[j]);
+                    }
 
-                            hashes[index] = h[0];
-                            hashes[loaded_count + index] = h[1];
-                            hashes[2 * loaded_count + index] = h[2];
-                            hashes[3 * loaded_count + index] = h[3];
-                        }
+                    int val = 0;
+                    if (use_local)
+                        val = bitmaps[hash / (sizeof(*bitmaps) *8)] &
+                            (1U << (hash % (sizeof(*bitmaps) *8)));
+                    else
+                        val =  bitmaps[hash / (sizeof(*bitmaps) *8)] &
+                            (1U << (hash % (sizeof(*bitmaps) *8)));
+                    
+                    if (val) {
+                        int hash_index = hashtable[hash >> MD5_HASH_SHR];
+                        if ( hash_index != -1)
+                        do {
+                            if (h[0] == loaded_hash[hash_index]) {
+                                uint index = atom_inc(matched_count);
+                                uint m_base  = index * KEY_LENGTH;
+
+                                PUTCHAR(key, length, '\0');
+                                char *q = (char*)key;
+                        
+                                for (int j = 0; j <= length; ++j)
+                                    PUTCHAR(matched_keys, m_base+j, q[j]);
+
+                                hashes[index] = h[0];
+                                hashes[loaded_count + index] = h[1];
+                                hashes[2 * loaded_count + index] = h[2];
+                                hashes[3 * loaded_count + index] = h[3];
+                            }
+                        } while ((hash_index = loaded_next_hash[hash_index])!=-1);
                     }
                 }
                 else {

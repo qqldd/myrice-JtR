@@ -16,7 +16,7 @@
 #include "loader.h"
 #include "common-opencl.h"
 
-#define MD5_NUM_KEYS        2048*16
+#define MD5_NUM_KEYS        2048*8
 #define PLAINTEXT_LENGTH    31
 #define FORMAT_LABEL        "raw-md5-opencl"
 #define FORMAT_NAME         "Raw MD5"
@@ -36,6 +36,21 @@ static cl_uint *loaded_hash = NULL, loaded_count = 0;
 cl_mem buffer_matched_count;
 static cl_uint matched_count;
 
+cl_mem buffer_bitmaps, buffer_hashtable, buffer_loaded_next_hash;
+static cl_int *bitmaps, *hashtable, *loaded_next_hash;
+
+#define MD5_PASSWORD_HASH_SIZE_0 0x10000
+#define MD5_PASSWORD_HASH_SIZE_1 0x10000 // 64K
+#define MD5_PASSWORD_HASH_SIZE_2 0x1000000 // 16M
+
+#define MD5_PASSWORD_HASH_THRESHOLD_0 0
+#define MD5_PASSWORD_HASH_THRESHOLD_1 204
+#define MD5_PASSWORD_HASH_THRESHOLD_2 6553
+
+#define MD5_HASH_SHR 2
+
+static cl_kernel bitmaps_kernel;
+
 cl_mem buffer_matched_keys;
 static char *matched_keys;
 
@@ -47,8 +62,8 @@ static char get_key_saved[PLAINTEXT_LENGTH + 1];
 #define MIN_KEYS_PER_CRYPT      2048
 #define MAX_KEYS_PER_CRYPT      MD5_NUM_KEYS
 
-// datai: 0: PLAINTEXT_LENGTH, 1: kpc 2: loaded_count
-#define DATA_INFO_NUM 3
+// datai: 0: PLAINTEXT_LENGTH, 1: kpc 2: loaded_count 3: hash_num
+#define DATA_INFO_NUM 4
 static unsigned int datai[DATA_INFO_NUM];
 
 static int have_full_hashes;
@@ -133,6 +148,9 @@ static void create_clobj(int kpc){
 		(void *) &buffer_cracked_count), "Error setting argument 5");
 	HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
 		(void *) NULL), "Error setting argument 6");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 7, sizeof(buffer_bitmaps), (void *) NULL), "Error setting argument 7");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 8, sizeof(buffer_hashtable), (void *) NULL), "Error setting argument 8");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 9, sizeof(buffer_loaded_next_hash), (void *) NULL), "Error setting argument 9");
     
 	datai[0] = PLAINTEXT_LENGTH;
 	datai[1] = kpc;
@@ -339,6 +357,89 @@ static char *get_key(int index) {
 	return cpy_key_out(index, keys);
 }
 
+
+static size_t create_bitmaps_args()
+{
+    size_t hash_num;
+    size_t bitmaps_size;
+    size_t hashtable_size;
+    size_t bitmaps_uint_num;
+    
+    // data_info: 0: loaded_count, 1: hash_num
+//    int data_info_num = 2;
+//    cl_uint data_info[data_info_num];
+//    static cl_mem buffer_data_info;
+    cl_int *zero;
+    int max = 0;
+
+    // Create bitmaps, loaded_hashtable and pointer to next hash on device
+    if (loaded_count > MD5_PASSWORD_HASH_THRESHOLD_2) 
+        hash_num = MD5_PASSWORD_HASH_SIZE_2;
+    else
+        hash_num = MD5_PASSWORD_HASH_SIZE_1;
+
+//    data_info[0] = loaded_count;
+//    data_info[1] = hash_num;
+
+//    buffer_data_info = clCreateBuffer(context[gpu_id], CL_MEM_READ_ONLY, data_info_num * sizeof(cl_uint), NULL, &ret_code);
+//    HANDLE_CLERROR(ret_code, "Error creating buffer_data_info argument");
+
+    bitmaps_size = (hash_num+sizeof(cl_uint)*8-1)/(sizeof(cl_uint)*8) * sizeof(cl_uint);
+    buffer_bitmaps = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE, bitmaps_size, NULL, &ret_code);
+    HANDLE_CLERROR(ret_code, "Error creating buffer_bitmaps argument");
+    
+    hashtable_size = (hash_num >> MD5_HASH_SHR) * sizeof(cl_int);
+    buffer_hashtable = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE, hashtable_size, NULL, &ret_code);
+    HANDLE_CLERROR(ret_code, "Error creating buffer_hashtable argument");
+
+    buffer_loaded_next_hash = clCreateBuffer(context[gpu_id], CL_MEM_READ_WRITE, loaded_count * sizeof(cl_int), NULL, &ret_code);
+    HANDLE_CLERROR(ret_code, "Error creating buffe_loaded_next_hash argument");
+
+    // allocate CPU memory
+    bitmaps = malloc(bitmaps_size);
+    hashtable = malloc(hashtable_size);
+    loaded_next_hash = malloc(loaded_count * sizeof(cl_int));
+    
+    // set bitmaps_kernel
+   /*  bitmaps_kernel = clCreateKernel(program[gpu_id], "create_bitmaps", &ret_code); */
+   /*  HANDLE_CLERROR(ret_code, "Error creating bitmaps kernel. Double-check kernel name?"); */
+
+   /*  HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 0, sizeof(buffer_data_info), (void *) &buffer_data_info), "Error setting argument 0"); */
+   /*  HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 1, sizeof(buffer_loaded_hash), (void *) &buffer_loaded_hash), "Error setting argument 1"); */
+   /*  HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 2, sizeof(buffer_bitmaps), (void *) &buffer_bitmaps), "Error setting argument 2"); */
+   /*  HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 3, sizeof(buffer_hashtable), (void *) &buffer_hashtable), "Error setting argument 3"); */
+   /*  HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 4, sizeof(buffer_loaded_next_hash), (void *) &buffer_loaded_next_hash), "Error setting argument 4"); */
+   /* HANDLE_CLERROR(clSetKernelArg(bitmaps_kernel, 5, sizeof(buffer_semaphor), (void *) &buffer_semaphor), "Error setting argument 5"); */
+   
+    // copy data into device
+//    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_data_info, CL_TRUE, 0, data_info_num * sizeof(cl_uint), data_info, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_data_info");
+
+    // set inital value to data
+    /* bitmaps_uint_num = (hash_num+sizeof(cl_uint)*8-1)/(sizeof(cl_uint)*8); */
+    
+    /* if (loaded_count > (hash_num >> MD5_HASH_SHR)) */
+    /*     max = loaded_count; */
+    /* else */
+    /*     max = hash_num >> MD5_HASH_SHR; */
+    /* if (max < bitmaps_uint_num) */
+    /*     max = bitmaps_uint_num;  */
+    /* zero = malloc(sizeof(cl_uint)*max); */
+    /* memset(zero, 0, sizeof(cl_uint)*max); */
+    
+    /* HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_bitmaps, CL_TRUE, 0, bitmaps_size, zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_bitmaps"); */
+    /* HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_semaphor, CL_TRUE, 0, sizeof(cl_int), zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_bitmaps");     */
+
+    /* int i = 0; */
+    /* for (i = 0; i < max; ++i) */
+    /*     zero[i] = -1; */
+    /* HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_next_hash, CL_TRUE, 0, loaded_count * sizeof(cl_uint), zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_next_hash"); */
+    /* HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_hashtable, CL_TRUE, 0, hashtable_size, zero, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_hashtable"); */
+
+    /* free(zero); */
+
+    return hash_num;
+}
+
 static void reset(struct db_main *db)
 {
     cl_uint count = 0;
@@ -346,6 +447,11 @@ static void reset(struct db_main *db)
     struct db_password *current_password;
     int index = 0;
     int loaded_hash_size;
+    size_t lws, gws;
+    size_t hash_num;
+    size_t bitmaps_num;
+    size_t hashtable_num;
+    int i;
     
     if (db == NULL) {
          return;
@@ -368,7 +474,7 @@ static void reset(struct db_main *db)
 
         // Allocate matched keys, matched_keys should not greater the loaded count
         buffer_matched_keys =  clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, (PLAINTEXT_LENGTH+1) * loaded_count, NULL, &ret_code);
-        HANDLE_CLERROR(ret_code, "Error creating buffer_matched_keys out argument");
+        HANDLE_CLERROR(ret_code, "Error creating buffer_matched_keys argument");
 
         matched_keys = malloc(sizeof(char[PLAINTEXT_LENGTH+1]) * loaded_count);
         
@@ -376,11 +482,15 @@ static void reset(struct db_main *db)
         HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
 		(void *) &buffer_matched_keys), "Error setting argument 6");    
 
+        // Enlarge hash size -> if self_test can test loaded hashes, this would be better
         if (loaded_count > MD5_NUM_KEYS) {
             release_hash();
             create_hash(loaded_count);
             HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 2, sizeof(buffer_out), (void *) &buffer_out), "Error setting argument 2");
         }
+
+        hash_num = create_bitmaps_args();
+        datai[3] = hash_num;
     }
     
     current_salt = db->salts;
@@ -396,17 +506,92 @@ static void reset(struct db_main *db)
     } while ((current_password = current_password->next) != NULL);
     
     HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_hash, CL_TRUE, 0, loaded_hash_size, loaded_hash, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_loaded_hash");
+
+    // CPU bitmaps
+    bitmaps_num = (hash_num+sizeof(cl_uint)*8-1)/(sizeof(cl_uint)*8);
+    hashtable_num =  (hash_num >> MD5_HASH_SHR);
+
+    memset(bitmaps, 0, bitmaps_num * sizeof(*bitmaps));
+    // -1 = 0xFF, 0xFFFFFFFF = -1
+    memset(hashtable, -1, hashtable_num * sizeof(cl_int));
+    memset(loaded_next_hash, -1, loaded_count * sizeof(cl_int));
     
+    for (i = 0; i < loaded_count; ++i) {
+        cl_uint hash;
+        if (hash_num == MD5_PASSWORD_HASH_SIZE_2)
+            hash = loaded_hash[i] & 0xFFFFFF;
+        else
+            hash = loaded_hash[i] & 0xFFFF;
+        
+        uint index = hash / (sizeof(*bitmaps) * 8);
+        uint bit_index = hash % (sizeof(*bitmaps) * 8);
+        uint val = 1U << bit_index;
+        bitmaps[index] |= val;
+        hash >>= MD5_HASH_SHR;
+        loaded_next_hash[i] = hashtable[hash];
+        hashtable[hash] = i;
+        
+    }
+
+    /* for (i = 0; i < hash_num>>MD5_HASH_SHR; ++i) */
+    /*     if (hashtable[i] != -1) */
+    /*         printf("i: %d, hashtable: %d \n", i, hashtable[i]); */
+    /* for (i = 0; i < loaded_count; ++i) */
+    /*     if (loaded_next_hash[i] != -1) */
+    /*         printf("i: %d, loaded_next_hash: %d \n", i, loaded_next_hash[i]); */
+
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_bitmaps, CL_TRUE, 0, bitmaps_num * sizeof(*bitmaps), bitmaps, 0, NULL, NULL), "failed in clEnqueueWriteBuffer");
+
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_hashtable, CL_TRUE, 0, hashtable_num * sizeof(cl_int), hashtable, 0, NULL, NULL), "failed in clEnqueueWriteBuffer");
+    
+    HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_loaded_next_hash, CL_TRUE, 0, loaded_count*sizeof(cl_int), loaded_next_hash, 0, NULL, NULL), "failed in clEnqueueWriteBuffer");
+    
+    // create bitmaps on device
+//    lws = 64;
+//    gws = (loaded_count + lws - 1) / lws * lws;
+//    HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[gpu_id], bitmaps_kernel, 1, NULL, &gws, &lws, 0, NULL, &profilingEvent), "failed in clEnqueueNDRangeKernel bitmaps_kernel");
+//	HANDLE_CLERROR(clFinish(queue[gpu_id]),"failed in clFinish bitmaps_kernel");
+
+//    cl_int *tmp, *tmp1;
+//    tmp = malloc((hash_num>>MD5_HASH_SHR)*sizeof(cl_int));
+//    tmp1 = malloc(loaded_count * sizeof(cl_int));
+    
+//    HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_loaded_next_hash, CL_TRUE, 0, loaded_count * sizeof(cl_int), tmp1, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_next_hash");
+//    HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_hashtable, CL_TRUE, 0, (hash_num>>MD5_HASH_SHR)*sizeof(cl_int), tmp, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_data_info");
+    
+//    for (i = 0; i < hash_num>>MD5_HASH_SHR; ++i)
+//        if (tmp[i] != -1)
+//            printf("i: %d, tmp: %d \n", i, tmp[i]);
+//    for (i = 0; i < loaded_count; ++i)
+//        if (tmp1[i] != -1)
+//            printf("i: %d, tmp1: %d \n", i, tmp1[i]);
+    
+//    free(tmp);
+//    free(tmp1);
+
+    
+    // set argument for crypt_kernel
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 7, sizeof(buffer_bitmaps), (void *) &buffer_bitmaps), "Error setting argument 7");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 8, sizeof(buffer_hashtable), (void *) &buffer_hashtable), "Error setting argument 8");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 9, sizeof(buffer_loaded_next_hash), (void *) &buffer_loaded_next_hash), "Error setting argument 9");
+
 }
 
 static void done()
 {
     loaded_count = 0;
     release_clobj();
+    if (loaded_count != 0) {
+        //To do:
+        // release buffer_loaded_hashes
+        // release bitmaps related varible
+    }
+        
 }
 
 static int crypt_all(int *pcount, struct db_salt *salt)
 {
+    printf("in crypt_all\n");
     int count = *pcount;
     cl_uint zero = 0;
     
@@ -440,12 +625,14 @@ static int crypt_all(int *pcount, struct db_salt *salt)
     // Copy count to crack to device
     HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_cracked_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_cracked_count");
 
+    printf("%d\n", local_work_size);
     // Do crack
 	HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[gpu_id], crypt_kernel, 1, NULL,
 	    &global_work_size, &local_work_size, 0, NULL, &profilingEvent),
 	    "failed in clEnqueueNDRangeKernel");
 	HANDLE_CLERROR(clFinish(queue[gpu_id]),"failed in clFinish");
 
+    printf("crack end\n");
 
     if (loaded_count != 0) {
         // read back matched password
@@ -453,6 +640,11 @@ static int crypt_all(int *pcount, struct db_salt *salt)
     
         // read back matched count 
         HANDLE_CLERROR(clEnqueueReadBuffer(queue[gpu_id], buffer_matched_count, CL_TRUE, 0, sizeof(cl_uint) , &matched_count, 0, NULL, NULL), "failed in reading matched_count back");
+
+        /* int i =0; */
+        /* for (i = 0; i < matched_count; ++i) */
+        /*     printf("mcount: %d mpass %s\n", matched_count, matched_keys+i*(PLAINTEXT_LENGTH+1)); */
+
         *pcount *= 53*53;
     }
 
