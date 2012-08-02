@@ -192,7 +192,7 @@ static char *fmt_self_test_body(struct fmt_main *format,
 
 		{
 			int count = index + 1;
-			if (format->methods.crypt_all(&count, NULL) != count)
+			if (format->methods.crypt_all(&count, NULL) != index+1)
 				return "crypt_all";
 		}
 
@@ -295,6 +295,7 @@ char *fmt_self_test(struct fmt_main *format)
 	MEM_FREE(salt_alloc);
 	MEM_FREE(binary_alloc);
 
+    printf("end self test\n");
 	return retval;
 }
 
