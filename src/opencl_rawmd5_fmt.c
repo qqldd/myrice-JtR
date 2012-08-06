@@ -151,6 +151,7 @@ static void create_clobj(int kpc){
     HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 7, sizeof(buffer_bitmaps), (void *) NULL), "Error setting argument 7");
     HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 8, sizeof(buffer_hashtable), (void *) NULL), "Error setting argument 8");
     HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 9, sizeof(buffer_loaded_next_hash), (void *) NULL), "Error setting argument 9");
+    HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 10, sizeof(cl_uint)*2048, (void *) NULL), "Error setting argument 10");    
     
 	datai[0] = PLAINTEXT_LENGTH;
 	datai[1] = kpc;
@@ -476,7 +477,7 @@ static void reset(struct db_main *db)
         buffer_matched_keys =  clCreateBuffer(context[gpu_id], CL_MEM_WRITE_ONLY, (PLAINTEXT_LENGTH+1) * loaded_count, NULL, &ret_code);
         HANDLE_CLERROR(ret_code, "Error creating buffer_matched_keys argument");
 
-        matched_keys = malloc(sizeof(char[PLAINTEXT_LENGTH+1]) * loaded_count);
+        matched_keys = malloc(sizeof(char[PLAINTEXT_LENGTH+1]) * loaded_count *2);
         
         // Set new allocated buffer_matched_keys on Device
         HANDLE_CLERROR(clSetKernelArg(crypt_kernel, 6, sizeof(buffer_matched_count),
@@ -591,7 +592,7 @@ static void done()
 
 static int crypt_all(int *pcount, struct db_salt *salt)
 {
-    printf("in crypt_all\n");
+//    printf("in crypt_all\n");
     int count = *pcount;
     cl_uint zero = 0;
     
@@ -625,14 +626,14 @@ static int crypt_all(int *pcount, struct db_salt *salt)
     // Copy count to crack to device
     HANDLE_CLERROR(clEnqueueWriteBuffer(queue[gpu_id], buffer_cracked_count, CL_TRUE, 0, sizeof(cl_uint), &count, 0, NULL, NULL), "failed in clEnqueueWriteBuffer buffer_cracked_count");
 
-    printf("%d\n", local_work_size);
+//    printf("%d\n", local_work_size);
     // Do crack
 	HANDLE_CLERROR(clEnqueueNDRangeKernel(queue[gpu_id], crypt_kernel, 1, NULL,
 	    &global_work_size, &local_work_size, 0, NULL, &profilingEvent),
 	    "failed in clEnqueueNDRangeKernel");
 	HANDLE_CLERROR(clFinish(queue[gpu_id]),"failed in clFinish");
 
-    printf("crack end\n");
+//    printf("crack end\n");
 
     if (loaded_count != 0) {
         // read back matched password

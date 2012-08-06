@@ -81,7 +81,7 @@ static uint get_hash_high(uint hash) { return hash & 0xFFFFFF; }
 /* OpenCL kernel entry point. Copy KEY_LENGTH bytes key to be hashed from
  * global to local (thread) memory. Break the key into 16 32-bit (uint)
  * words. MD5 hash of a key is 128 bit (uint4). */
-__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys, global uint* bitmaps, global int* hashtable, global int* loaded_next_hash)
+__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys, global uint* bitmaps, global int* hashtable, global int* loaded_next_hash, local uint* local_bitmaps)
 {
 	int id = get_global_id(0);
     int init_count = *cracked_count;
@@ -92,9 +92,32 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
         uint loaded_count = data_info[2];
         int base = id * (KEY_LENGTH / 4);
         uint hash_num = data_info[3];
+
+        __private uint p_loaded_hash[3];
+        int use_local = 0;
+        int bitmaps_num;
+
+        if (loaded_count < 3) {
+            for (int i = 0; i < loaded_count; ++i)
+                p_loaded_hash[i] = loaded_hash[i];
+        } else if (hash_num == MD5_PASSWORD_HASH_SIZE_1) {
+            bitmaps_num = (hash_num+sizeof(int)*8-1)/(sizeof(int)*8);
+            uint lws = get_local_size(0);
+            uint lid = get_local_id(0);
+
+            for (int i = 0; i < bitmaps_num; i+=lws) {
+                uint index = i+lid;
+                if (index < bitmaps_num) {
+                    local_bitmaps[index] = bitmaps[index];
+                }
+            }
+            use_local = 1;
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+        
         
         int loop_num = loaded_count == 0 ? 0 : ALPHA_SET_SIZE;
-        
+
         // -1 for add none character
         for (int alpha_i = -1; alpha_i < loop_num; ++alpha_i) {
             for (int alpha_j = -1; alpha_j < loop_num; ++alpha_j) {
@@ -115,11 +138,11 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 }
                 
                 if (alpha_j != -1) {
-                    PUTCHAR(key, i, alpha_set[alpha_j]);
+                    PUTCHAR(key, i, alpha_set[alpha_j]); 
                     ++i;                    
                 }
                 uint length = i;
-
+                
                 //p[i] = 0x80;
                 //p[56] = i << 3;
                 //p[57] = i >> 5;
@@ -216,40 +239,39 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 
                 // Compare the hashes and return the matched count
                 if (loaded_count != 0) {
-//                    for (int i = 0; i < loaded_count; ++i) {
-//                        if (h[0] == loaded_hash[i] && h[1] == loaded_hash[loaded_count+i]) {
                     uint hash;
-                    // 8KB bitmaps in local memory
-                    //                  __local int local_bitmaps[2048];
-//                    __private int p_bitmaps[2048];
-                    int use_local = 0;
-                    int bitmaps_num;
+
+                    if (loaded_count < 3) {
+                        for (int i = 0; i < loaded_count; ++i) {
+                            if (h[0] == p_loaded_hash[i]) {
+                                uint index = atom_inc(matched_count);
+                                uint m_base  = index * KEY_LENGTH;
+
+                                PUTCHAR(key, length, '\0');
+                                char *q = (char*)key;
+                                
+                                for (int j = 0; j <= length; ++j)
+                                    PUTCHAR(matched_keys, m_base+j, q[j]);
+
+                                hashes[index] = h[0];
+                                hashes[loaded_count + index] = h[1];
+                                hashes[2 * loaded_count + index] = h[2];
+                                hashes[3 * loaded_count + index] = h[3];
+                            }
+                        }
+                        continue;
+                    }
                     
                     if (hash_num == MD5_PASSWORD_HASH_SIZE_2) {
                         hash = get_hash_high(h[0]);
                     }
                     else {
                         hash = get_hash_low(h[0]);
-                        // bitmaps_num = (hash_num+sizeof(int)*8-1)/(sizeof(int)*8);
-                        // uint lws = get_local_size(0);
-                        // uint lid = get_local_id(0);
-
-                        // for (int i = 0; i < bitmaps_num; i+=lws) {
-                        //     uint index = i*lws+lid;
-                        //     if (index < bitmaps_num)
-                        //         local_bitmaps[index] = 0;//bitmaps[index];
-                        // }
-//                        if (lws == 0)
-                        //     for(int i = 0; i < 2048; i++)
-                        //         local_bitmaps[i] = bitmaps[i];
-                        // use_local = 1;
-                        // barrier(CLK_LOCAL_MEM_FENCE);
-                        
                     }
 
                     int val = 0;
                     if (use_local)
-                        val = bitmaps[hash / (sizeof(*bitmaps) *8)] &
+                        val = local_bitmaps[hash / (sizeof(*bitmaps) *8)] &
                             (1U << (hash % (sizeof(*bitmaps) *8)));
                     else
                         val =  bitmaps[hash / (sizeof(*bitmaps) *8)] &
