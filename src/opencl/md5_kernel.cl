@@ -116,21 +116,23 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
         }
         
         
-        int loop_num = loaded_count == 0 ? 0 : ALPHA_SET_SIZE;
+        uint key[16] = { 0 };
+        uint i;
 
+        for (i = 0; i != (KEY_LENGTH / 4) && keys[base + i]; i++)
+            key[i] = keys[base + i];
+
+        /* padding code (borrowed from MD5_eq.c) */
+        char *p = (char *) key;
+        for (i = 0; i != 64 && p[i]; i++);
+
+        int origin_i = i;
+        int loop_num = loaded_count == 0 ? 0 : ALPHA_SET_SIZE;
         // -1 for add none character
         for (int alpha_i = -1; alpha_i < loop_num; ++alpha_i) {
             for (int alpha_j = -1; alpha_j < loop_num; ++alpha_j) {
-                uint key[16] = { 0 };
-                uint i;
 
-                for (i = 0; i != (KEY_LENGTH / 4) && keys[base + i]; i++)
-                    key[i] = keys[base + i];
-
-                /* padding code (borrowed from MD5_eq.c) */
-                char *p = (char *) key;
-                for (i = 0; i != 64 && p[i]; i++);
-
+                i = origin_i;
                 // Generate key
                 if (alpha_i != -1) {
                     PUTCHAR(key, i, alpha_set[alpha_i]);
@@ -281,7 +283,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                         int hash_index = hashtable[hash >> MD5_HASH_SHR];
                         if ( hash_index != -1)
                         do {
-                            if (h[0] == loaded_hash[hash_index]) {
+                            if (h[0] == loaded_hash[hash_index] && h[1] == loaded_hash[loaded_count+hash_index]) {
                                 uint index = atom_inc(matched_count);
                                 uint m_base  = index * KEY_LENGTH;
 

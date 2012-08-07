@@ -16,7 +16,7 @@
 #include "loader.h"
 #include "common-opencl.h"
 
-#define MD5_NUM_KEYS        2048*8
+#define MD5_NUM_KEYS        2048*32
 #define PLAINTEXT_LENGTH    31
 #define FORMAT_LABEL        "raw-md5-opencl"
 #define FORMAT_NAME         "Raw MD5"
