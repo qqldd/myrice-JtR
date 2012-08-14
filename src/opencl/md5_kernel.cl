@@ -21,15 +21,18 @@
 #define PUTCHAR(buf, index, val) (buf)[(index)>>2] = ((buf)[(index)>>2] & ~(0xffU << (((index) & 3) << 3))) + ((val) << (((index) & 3) << 3))
 
 /* The basic MD5 functions */
-#define F(x, y, z)			((z) ^ ((x) & ((y) ^ (z))))
-#define G(x, y, z)			((y) ^ ((z) & ((x) ^ (y))))
+#define Fc(x, y, z)			((z) ^ ((x) & ((y) ^ (z))))
+#define F(x, y, z)			bitselect((z), (y), (x))
+#define G(x, y, z)			bitselect((y), (x), (z))
+//#define F(x, y, z)			((z) ^ ((x) & ((y) ^ (z))))
+//#define G(x, y, z)			((y) ^ ((z) & ((x) ^ (y))))
 #define H(x, y, z)			((x) ^ (y) ^ (z))
 #define I(x, y, z)			((y) ^ ((x) | ~(z)))
 
 /* The MD5 transformation for all four rounds. */
 #define STEP(f, a, b, c, d, x, t, s) \
     (a) += f((b), (c), (d)) + (x) + (t); \
-    (a) = (((a) << (s)) | (((a) & 0xffffffff) >> (32 - (s)))); \
+    (a) = rotate(a, (uint)s); \
     (a) += (b);
 
 #define GET(i) (key[(i)])
@@ -78,13 +81,32 @@ static uint get_hash_high(uint hash) { return hash & 0xFFFFFF; }
 /* some constants used below magically appear after make */
 //#define KEY_LENGTH (MD5_PLAINTEXT_LENGTH + 1)
 
+inline int bitmaps_val(uint hash, bool use_local, global uint* bitmaps[4], local uint* local_bitmaps, int index, uint bitmaps_num)
+{
+    int val = 0;
+    if (use_local) 
+        hash = get_hash_low(hash);
+    else 
+        hash = get_hash_high(hash);
+
+    if (use_local)
+        val = local_bitmaps[index * bitmaps_num + hash / (sizeof(*bitmaps[0]) *8)] & (1U << (hash % (sizeof(*bitmaps[0]) *8)));
+    else
+        val =  bitmaps[index][hash / (sizeof(*bitmaps[0]) *8)] &
+            (1U << (hash % (sizeof(*bitmaps[0]) *8)));
+    return val;
+    
+}
 /* OpenCL kernel entry point. Copy KEY_LENGTH bytes key to be hashed from
  * global to local (thread) memory. Break the key into 16 32-bit (uint)
  * words. MD5 hash of a key is 128 bit (uint4). */
-__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys, global uint* bitmaps, global int* hashtable, global int* loaded_next_hash, local uint* local_bitmaps)
+__kernel void md5(__global uint *data_info, __global const uint * keys, __global uint * hashes, __global uint* loaded_hash,  __global uint *matched_count, __global uint* cracked_count, __global uint* matched_keys, global uint* bitmaps0, global uint* bitmaps1, global uint* bitmaps2, global uint* bitmaps3, global int* hashtable, global int* loaded_next_hash, local uint* local_bitmaps)
 {
 	int id = get_global_id(0);
+    int lws = get_local_size(0);
+    int lid = get_local_id(0);
     int init_count = *cracked_count;
+    init_count = (init_count + lws -1) / lws * lws;
     
     if (id < init_count) {
         uint num_keys = data_info[1];
@@ -92,29 +114,35 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
         uint loaded_count = data_info[2];
         int base = id * (KEY_LENGTH / 4);
         uint hash_num = data_info[3];
+        global uint* bitmaps[4] = {bitmaps0, bitmaps1, bitmaps2, bitmaps3};
 
-        __private uint p_loaded_hash[3];
-        int use_local = 0;
+#if 0
+        __private uint p_loaded_hash[2];
+#endif
+        bool use_local = false;
         int bitmaps_num;
 
+#if 0
         if (loaded_count < 3) {
             for (int i = 0; i < loaded_count; ++i)
                 p_loaded_hash[i] = loaded_hash[i];
-        } else if (hash_num == MD5_PASSWORD_HASH_SIZE_1) {
+        } else
+#endif
+	if (hash_num == MD5_PASSWORD_HASH_SIZE_1) {
             bitmaps_num = (hash_num+sizeof(int)*8-1)/(sizeof(int)*8);
-            uint lws = get_local_size(0);
-            uint lid = get_local_id(0);
 
             for (int i = 0; i < bitmaps_num; i+=lws) {
                 uint index = i+lid;
                 if (index < bitmaps_num) {
-                    local_bitmaps[index] = bitmaps[index];
+                    local_bitmaps[index] = bitmaps[0][index];
+                    local_bitmaps[index+bitmaps_num] = bitmaps[1][index];
+                    local_bitmaps[index+bitmaps_num*2] = bitmaps[2][index];
+                    local_bitmaps[index+bitmaps_num*3] = bitmaps[3][index];                    
                 }
             }
-            use_local = 1;
+            use_local = true;
             barrier(CLK_LOCAL_MEM_FENCE);
         }
-        
         
         uint key[16] = { 0 };
         uint i;
@@ -134,15 +162,13 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
 
                 i = origin_i;
                 // Generate key
-                if (alpha_i != -1) {
+                if (alpha_i != -1 && alpha_j != -1) {
                     PUTCHAR(key, i, alpha_set[alpha_i]);
                     ++i;
-                }
-                
-                if (alpha_j != -1) {
                     PUTCHAR(key, i, alpha_set[alpha_j]); 
                     ++i;                    
-                }
+                } else if ((alpha_i != -1 && alpha_j == -1) || (alpha_i == -1 && alpha_j != -1))
+                    continue;
                 uint length = i;
                 
                 //p[i] = 0x80;
@@ -160,10 +186,14 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 d = 0x10325476;
 
                 /* Round 1 */
-                STEP(F, a, b, c, d, GET(0), 0xd76aa478, 7);
-                STEP(F, d, a, b, c, GET(1), 0xe8c7b756, 12);
-                STEP(F, c, d, a, b, GET(2), 0x242070db, 17);
-                STEP(F, b, c, d, a, GET(3), 0xc1bdceee, 22);
+/* We use Fc() instead of F() to let the compiler compute constant
+ * subexpressions, which it apparently fails to do when we use bitselect().
+ * It'd be better to do such precomputation manually, like it's done in
+ * phpass_kernel.cl: phpass(). */
+                STEP(Fc, a, b, c, d, GET(0), 0xd76aa478, 7);
+                STEP(Fc, d, a, b, c, GET(1), 0xe8c7b756, 12);
+                STEP(Fc, c, d, a, b, GET(2), 0x242070db, 17);
+                STEP(Fc, b, c, d, a, GET(3), 0xc1bdceee, 22);
                 STEP(F, a, b, c, d, GET(4), 0xf57c0faf, 7);
                 STEP(F, d, a, b, c, GET(5), 0x4787c62a, 12);
                 STEP(F, c, d, a, b, GET(6), 0xa8304613, 17);
@@ -175,8 +205,8 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 STEP(F, a, b, c, d, GET(12), 0x6b901122, 7);
                 STEP(F, d, a, b, c, GET(13), 0xfd987193, 12);
                 STEP(F, c, d, a, b, GET(14), 0xa679438e, 17);
-                STEP(F, b, c, d, a, GET(15), 0x49b40821, 22);
-        
+                STEP(F, b, c, d, a, 0, 0x49b40821, 22);
+
                 /* Round 2 */
                 STEP(G, a, b, c, d, GET(1), 0xf61e2562, 5);
                 STEP(G, d, a, b, c, GET(6), 0xc040b340, 9);
@@ -184,7 +214,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 STEP(G, b, c, d, a, GET(0), 0xe9b6c7aa, 20);
                 STEP(G, a, b, c, d, GET(5), 0xd62f105d, 5);
                 STEP(G, d, a, b, c, GET(10), 0x02441453, 9);
-                STEP(G, c, d, a, b, GET(15), 0xd8a1e681, 14);
+                STEP(G, c, d, a, b, 0, 0xd8a1e681, 14);
                 STEP(G, b, c, d, a, GET(4), 0xe7d3fbc8, 20);
                 STEP(G, a, b, c, d, GET(9), 0x21e1cde6, 5);
                 STEP(G, d, a, b, c, GET(14), 0xc33707d6, 9);
@@ -210,7 +240,7 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 STEP(H, b, c, d, a, GET(6), 0x04881d05, 23);
                 STEP(H, a, b, c, d, GET(9), 0xd9d4d039, 4);
                 STEP(H, d, a, b, c, GET(12), 0xe6db99e5, 11);
-                STEP(H, c, d, a, b, GET(15), 0x1fa27cf8, 16);
+                STEP(H, c, d, a, b, 0, 0x1fa27cf8, 16);
                 STEP(H, b, c, d, a, GET(2), 0xc4ac5665, 23);
 
                 /* Round 4 */
@@ -223,92 +253,90 @@ __kernel void md5(__global uint *data_info, __global const uint * keys, __global
                 STEP(I, c, d, a, b, GET(10), 0xffeff47d, 15);
                 STEP(I, b, c, d, a, GET(1), 0x85845dd1, 21);
                 STEP(I, a, b, c, d, GET(8), 0x6fa87e4f, 6);
-                STEP(I, d, a, b, c, GET(15), 0xfe2ce6e0, 10);
+                STEP(I, d, a, b, c, 0, 0xfe2ce6e0, 10);
                 STEP(I, c, d, a, b, GET(6), 0xa3014314, 15);
                 STEP(I, b, c, d, a, GET(13), 0x4e0811a1, 21);
                 STEP(I, a, b, c, d, GET(4), 0xf7537e82, 6);
-                STEP(I, d, a, b, c, GET(11), 0xbd3af235, 10);
-                STEP(I, c, d, a, b, GET(2), 0x2ad7d2bb, 15);
-                STEP(I, b, c, d, a, GET(9), 0xeb86d391, 21);
 
-                /* The following hack allows only 1/4 of the hash data to be copied in crypt_all.
-                 * This code doesn't seem to have any performance gains but has other benefits */
-                uint h[4];
-                h[0] = a + 0x67452301;
-                h[1] = b + 0xefcdab89;
-                h[2] = c + 0x98badcfe;
-                h[3] = d + 0x10325476;
-                
+/* We should reverse this and many rounds above instead */
+                a += 0x67452301;
+
                 // Compare the hashes and return the matched count
                 if (loaded_count != 0) {
                     uint hash;
 
-                    if (loaded_count < 3) {
-                        for (int i = 0; i < loaded_count; ++i) {
-                            if (h[0] == p_loaded_hash[i]) {
-                                uint index = atom_inc(matched_count);
-                                uint m_base  = index * KEY_LENGTH;
-
-                                PUTCHAR(key, length, '\0');
-                                char *q = (char*)key;
-                                
-                                for (int j = 0; j <= length; ++j)
-                                    PUTCHAR(matched_keys, m_base+j, q[j]);
-
-                                hashes[index] = h[0];
-                                hashes[loaded_count + index] = h[1];
-                                hashes[2 * loaded_count + index] = h[2];
-                                hashes[3 * loaded_count + index] = h[3];
-                            }
-                        }
-                        continue;
-                    }
-                    
                     if (hash_num == MD5_PASSWORD_HASH_SIZE_2) {
-                        hash = get_hash_high(h[0]);
+                        hash = get_hash_high(a);
                     }
                     else {
-                        hash = get_hash_low(h[0]);
+                        hash = get_hash_low(a);
                     }
 
-                    int val = 0;
-                    if (use_local)
-                        val = local_bitmaps[hash / (sizeof(*bitmaps) *8)] &
-                            (1U << (hash % (sizeof(*bitmaps) *8)));
-                    else
-                        val =  bitmaps[hash / (sizeof(*bitmaps) *8)] &
-                            (1U << (hash % (sizeof(*bitmaps) *8)));
-                    
-                    if (val) {
-                        int hash_index = hashtable[hash >> MD5_HASH_SHR];
-                        if ( hash_index != -1)
-                        do {
-                            if (h[0] == loaded_hash[hash_index] && h[1] == loaded_hash[loaded_count+hash_index]) {
-                                uint index = atom_inc(matched_count);
-                                uint m_base  = index * KEY_LENGTH;
+                    int val[4] = {0};
+                    val[0] = bitmaps_val(a, use_local, bitmaps, local_bitmaps, 0, bitmaps_num);
+                    if (val[0]) {
+                        bool have_b = 0;
+                        if (!have_b) {
+                            a -= 0x67452301;
+                            STEP(I, d, a, b, c, GET(11), 0xbd3af235, 10);
+                            STEP(I, c, d, a, b, GET(2), 0x2ad7d2bb, 15);
+                            STEP(I, b, c, d, a, GET(9), 0xeb86d391, 21);
+                            a += 0x67452301;
+                            b += 0xefcdab89;
+                            c += 0x98badcfe;
+                            d += 0x10325476;
+                            have_b = 1;
 
-                                PUTCHAR(key, length, '\0');
-                                char *q = (char*)key;
-                        
-                                for (int j = 0; j <= length; ++j)
-                                    PUTCHAR(matched_keys, m_base+j, q[j]);
+                            val[1] = bitmaps_val(b, use_local, bitmaps, local_bitmaps, 1, bitmaps_num);
+                            if (val[1]) {
+                            val[2] = bitmaps_val(c, use_local, bitmaps, local_bitmaps, 2, bitmaps_num);
+                            if (val[2]) {
+                            val[3] = bitmaps_val(d, use_local, bitmaps, local_bitmaps, 3, bitmaps_num);
+                            if (val[3]) {
+                            if (use_local)
+                                hash = get_hash_low(d);
+                            else
+                                hash = get_hash_high(d);
+                                
+                                int hash_index = hashtable[hash >> MD5_HASH_SHR];
+                                if ( hash_index != -1)
+                                    do {
+                                        if ( a == loaded_hash[hash_index] && b == loaded_hash[hash_index+loaded_count] && c == loaded_hash[hash_index+loaded_count*2] && d == loaded_hash[hash_index+loaded_count*3] ){
+                                        uint index = atom_inc(matched_count);
+                                        uint m_base  = index * KEY_LENGTH;
 
-                                hashes[index] = h[0];
-                                hashes[loaded_count + index] = h[1];
-                                hashes[2 * loaded_count + index] = h[2];
-                                hashes[3 * loaded_count + index] = h[3];
-                            }
-                        } while ((hash_index = loaded_next_hash[hash_index])!=-1);
+                                        PUTCHAR(key, length, '\0');
+                                        char *q = (char*)key;
+
+                                        for (int j = 0; j <= length; ++j)
+                                            PUTCHAR(matched_keys, m_base+j, q[j]);
+
+                                        hashes[index] = a;
+                                        hashes[loaded_count + index] = b;
+                                        hashes[2 * loaded_count + index] = c;
+                                        hashes[3 * loaded_count + index] = d;
+                                        }
+                                    } while ((hash_index = loaded_next_hash[hash_index])!=-1);
+                            }}}
+                        }
                     }
                 }
                 else {
-                    hashes[id] = h[0];
-                    hashes[1 * num_keys + id] = h[1];
-                    hashes[2 * num_keys + id] = h[2];
-                    hashes[3 * num_keys + id] = h[3];
+                    a -= 0x67452301;
+                    STEP(I, d, a, b, c, GET(11), 0xbd3af235, 10);
+                    STEP(I, c, d, a, b, GET(2), 0x2ad7d2bb, 15);
+                    STEP(I, b, c, d, a, GET(9), 0xeb86d391, 21);
+                    a += 0x67452301;
+                    b += 0xefcdab89;
+                    c += 0x98badcfe;
+                    d += 0x10325476;
+                    hashes[id] = a;
+                    hashes[1 * num_keys + id] = b;
+                    hashes[2 * num_keys + id] = c;
+                    hashes[3 * num_keys + id] = d;
                 }
             }
-        
+
         } // End for alpha_j
     } // End for alpha_i
 }
