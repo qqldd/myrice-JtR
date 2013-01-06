@@ -1,6 +1,9 @@
 /*
- * This file is part of John the Ripper password cracker,
- * Copyright (c) 2013 by Myrice
+ * Copyright (c) 2013 myrice
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted.
+ *
  */
 
 /*
@@ -13,7 +16,7 @@
 #include "loader.h"
 
 /*
- * Runs the incremental mode cracker.
+ * Runs the mask mode cracker.
  */
 extern void do_mask_crack(struct db_main *db, char *param);
 
